@@ -28,7 +28,7 @@ function runLocalTests() {
   cleanupTestRows();
 
   runTest_('Config has required blocks', testConfigHasRequiredBlocks_, results);
-  runTest_('Summary config has Refresh EOD checkbox at end', testSummaryRefreshConfig_, results);
+  runTest_('Summary config has email columns with Send Email at end', testSummaryEmailConfig_, results);
   runTest_('Gmail query is correct', testGmailQuery_, results);
   runTest_('Order number normalisation accepts variable length', testOrderNumberNormalisation_, results);
   runTest_('Outstanding Orders order parsing accepts variable length', testOutstandingOrdersOrderParsing_, results);
@@ -71,10 +71,22 @@ function runLocalTests() {
   runTest_('Sheet protection helper is idempotent', testSheetProtectionHelperIdempotent_, results);
   runTest_('Summary sheet removes only HX internal protection', testSummaryProtectionCleanup_, results);
   runTest_('Summary setup applies Refresh EOD checkbox validation', testSummaryCheckboxValidation_, results);
+  runTest_('Summary setup applies Send Email checkbox validation', testSummarySendEmailCheckboxValidation_, results);
   runTest_('Summary refresh edit handler filters edits strictly', testSummaryRefreshEditFilter_, results);
   runTest_('Summary refresh edit handler refreshes checked rows', testSummaryRefreshEditHandlerCallsRefresh_, results);
   runTest_('Summary refresh edit handler resets checkbox after failure', testSummaryRefreshEditHandlerResetsAfterFailure_, results);
   runTest_('Summary refresh trigger duplicate check works', testSummaryRefreshTriggerDuplicateCheck_, results);
+  runTest_('Summary send email edit handler filters edits strictly', testSummarySendEmailEditFilter_, results);
+  runTest_('Summary send email handler sends valid row once', testSummarySendEmailSendsValidRowOnce_, results);
+  runTest_('Summary send email sent marker prevents duplicate', testSummarySendEmailSentStatusPreventsDuplicate_, results);
+  runTest_('Summary send email sent timestamp prevents duplicate', testSummarySendEmailSentAtPreventsDuplicate_, results);
+  runTest_('Summary send email blocking status prevents duplicate', testSummarySendEmailBlockingStatusPreventsDuplicate_, results);
+  runTest_('Summary send email validation failure resets checkbox', testSummarySendEmailValidationFailureResets_, results);
+  runTest_('Summary send email missing PDF blocks send', testSummarySendEmailMissingPdfBlocks_, results);
+  runTest_('Summary send email subject uses placeholders', testSummarySendEmailSubjectPlaceholders_, results);
+  runTest_('Summary send email body includes links', testSummarySendEmailBodyIncludesLinks_, results);
+  runTest_('Summary send email attaches PDF blob', testSummarySendEmailAttachesPdfBlob_, results);
+  runTest_('Summary send email exception records blocked state', testSummarySendEmailExceptionBlocksRetry_, results);
   runTest_('Coordinator refresh processes exactly one summary row', testCoordinatorRefreshProcessesOneRow_, results);
   runTest_('Coordinator refresh does not append summary rows', testCoordinatorRefreshDoesNotAppend_, results);
   runTest_('Coordinator refresh uses current summary row values', testCoordinatorRefreshUsesCurrentRowValues_, results);
@@ -177,13 +189,27 @@ function testConfigHasRequiredBlocks_() {
   });
 }
 
-function testSummaryRefreshConfig_() {
+function testSummaryEmailConfig_() {
   const columns = CONFIG.summary.columns;
-  const refreshColumn = columns[columns.length - 1];
+  const tail = columns.slice(-5).map(column => column.header);
+  const refreshColumn = columns.find(column => column.header === 'Refresh EOD');
+  const sendColumn = columns[columns.length - 1];
 
-  assertEquals_('Refresh EOD', refreshColumn.header, 'Refresh EOD must be the final summary column.');
+  assertEquals_(
+    'Email Sent At|Email Sent To|Email Status|Email Error|Send Email',
+    tail.join('|'),
+    'Email columns must be appended in the expected order.'
+  );
   assertEquals_(true, refreshColumn.manual, 'Refresh EOD must be manual.');
   assertEquals_('checkbox', refreshColumn.type, 'Refresh EOD must be a checkbox column.');
+  assertEquals_('Send Email', sendColumn.header, 'Send Email must be the final summary column.');
+  assertEquals_(true, sendColumn.manual, 'Send Email must be manual.');
+  assertEquals_('checkbox', sendColumn.type, 'Send Email must be a checkbox column.');
+  assertEquals_(
+    'jesse.lang.04@gmail.com',
+    CONFIG.summaryEmail.recipient,
+    'Summary email recipient is not configured as expected.'
+  );
 }
 
 function testGmailQuery_() {
@@ -1704,6 +1730,29 @@ function testSummaryCheckboxValidation_() {
   );
 }
 
+function testSummarySendEmailCheckboxValidation_() {
+  setup();
+
+  const sheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const headers = sheet
+    .getRange(CONFIG.summary.headerRow, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
+  const sendCol = getColumnIndex_(headers, 'Send Email');
+
+  assertTruthy_(sendCol > 0, 'Send Email column missing.');
+
+  const rule = sheet
+    .getRange(CONFIG.summary.headerRow + 1, sendCol)
+    .getDataValidation();
+
+  assertTruthy_(rule, 'Send Email data validation missing.');
+  assertEquals_(
+    SpreadsheetApp.DataValidationCriteria.CHECKBOX,
+    rule.getCriteriaType(),
+    'Send Email should use checkbox validation.'
+  );
+}
+
 function testSummaryRefreshEditFilter_() {
   const refreshCol = CONFIG.summary.columns.length + 1;
 
@@ -1773,6 +1822,16 @@ function testSummaryRefreshEditFilter_() {
       value: 'TRUE'
     })),
     'Checked Refresh EOD data-row edit should be accepted.'
+  );
+
+  assertEquals_(
+    'refresh_eod',
+    getSummaryEditRoute_(buildMockSummaryRefreshEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: refreshCol,
+      value: 'TRUE'
+    })),
+    'Edit router should route Refresh EOD edits.'
   );
 }
 
@@ -1847,6 +1906,248 @@ function testSummaryRefreshTriggerDuplicateCheck_() {
     hasProjectTriggerForHandler_(triggers, 'missingHandler'),
     'Duplicate trigger helper should allow missing handler.'
   );
+}
+
+function testSummarySendEmailEditFilter_() {
+  const sendCol = CONFIG.summary.columns.length + 1;
+
+  assertEquals_(
+    false,
+    isSummarySendEmailEdit_(null),
+    'Missing edit event should be ignored.'
+  );
+
+  assertEquals_(
+    false,
+    isSummarySendEmailEdit_(buildMockSummarySendEmailEditEvent_({
+      sheetName: 'Wrong Sheet',
+      row: CONFIG.summary.headerRow + 1,
+      col: sendCol,
+      value: 'TRUE'
+    })),
+    'Wrong sheet should be ignored.'
+  );
+
+  assertEquals_(
+    false,
+    isSummarySendEmailEdit_(buildMockSummarySendEmailEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: sendCol - 1,
+      value: 'TRUE'
+    })),
+    'Wrong column should be ignored.'
+  );
+
+  assertEquals_(
+    false,
+    isSummarySendEmailEdit_(buildMockSummarySendEmailEditEvent_({
+      row: CONFIG.summary.headerRow,
+      col: sendCol,
+      value: 'TRUE'
+    })),
+    'Header row should be ignored.'
+  );
+
+  assertEquals_(
+    false,
+    isSummarySendEmailEdit_(buildMockSummarySendEmailEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: sendCol,
+      value: 'FALSE'
+    })),
+    'Unchecked edit should be ignored.'
+  );
+
+  assertEquals_(
+    false,
+    isSummarySendEmailEdit_(buildMockSummarySendEmailEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: sendCol,
+      value: 'TRUE',
+      numRows: 2
+    })),
+    'Multi-row edit should be ignored.'
+  );
+
+  assertEquals_(
+    true,
+    isSummarySendEmailEdit_(buildMockSummarySendEmailEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: sendCol,
+      value: 'TRUE'
+    })),
+    'Checked Send Email data-row edit should be accepted.'
+  );
+
+  assertEquals_(
+    'send_email',
+    getSummaryEditRoute_(buildMockSummarySendEmailEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: sendCol,
+      value: 'TRUE'
+    })),
+    'Edit router should route Send Email edits.'
+  );
+}
+
+function testSummarySendEmailSendsValidRowOnce_() {
+  const result = runSummaryEmailServiceTest_({});
+
+  assertEquals_('sent', result.sendResult.status, 'Valid row should send.');
+  assertEquals_(1, result.sentEmails.length, 'Valid row should send exactly once.');
+  assertEquals_(
+    SummaryEmailService.STATUS_SENT,
+    result.sheet.getValueByHeader('Email Status'),
+    'Successful send should mark SENT.'
+  );
+  assertTruthy_(result.sheet.getValueByHeader('Email Sent At'), 'Successful send should set sent timestamp.');
+  assertEquals_(
+    CONFIG.summaryEmail.recipient,
+    result.sheet.getValueByHeader('Email Sent To'),
+    'Successful send should record recipient.'
+  );
+  assertEquals_(true, result.sheet.getValueByHeader('Send Email'), 'Successful send should leave checkbox checked.');
+  assertEquals_('', result.sheet.getValueByHeader('Email Error'), 'Successful send should clear error.');
+}
+
+function testSummarySendEmailSentStatusPreventsDuplicate_() {
+  const result = runSummaryEmailServiceTest_({
+    values: {
+      'Email Status': SummaryEmailService.STATUS_SENT
+    }
+  });
+
+  assertEquals_('already_sent', result.sendResult.status, 'SENT status should skip send.');
+  assertEquals_(0, result.sentEmails.length, 'SENT status should not send.');
+  assertEquals_(true, result.sheet.getValueByHeader('Send Email'), 'Already sent row should remain checked.');
+}
+
+function testSummarySendEmailSentAtPreventsDuplicate_() {
+  const result = runSummaryEmailServiceTest_({
+    values: {
+      'Email Sent At': new Date('2026-06-01T10:00:00+10:00')
+    }
+  });
+
+  assertEquals_('already_sent', result.sendResult.status, 'Sent timestamp should skip send.');
+  assertEquals_(0, result.sentEmails.length, 'Sent timestamp should not send.');
+}
+
+function testSummarySendEmailBlockingStatusPreventsDuplicate_() {
+  [
+    SummaryEmailService.STATUS_SENDING,
+    SummaryEmailService.STATUS_UNKNOWN,
+    SummaryEmailService.STATUS_SEND_FAILED_BLOCKED,
+    'MANUAL_REVIEW'
+  ].forEach(status => {
+    const result = runSummaryEmailServiceTest_({
+      values: {
+        'Email Status': status
+      }
+    });
+
+    assertEquals_('blocked', result.sendResult.status, `${status} should block send.`);
+    assertEquals_(0, result.sentEmails.length, `${status} should not send.`);
+    assertEquals_(true, result.sheet.getValueByHeader('Send Email'), `${status} should leave checkbox checked.`);
+  });
+}
+
+function testSummarySendEmailValidationFailureResets_() {
+  const result = runSummaryEmailServiceTest_({
+    values: {
+      'PDF': ''
+    },
+    formulaByHeader: {
+      'PDF': ''
+    }
+  });
+
+  assertEquals_('validation_failed', result.sendResult.status, 'Missing PDF should fail validation.');
+  assertEquals_(0, result.sentEmails.length, 'Validation failure should not send.');
+  assertEquals_(
+    SummaryEmailService.STATUS_VALIDATION_FAILED,
+    result.sheet.getValueByHeader('Email Status'),
+    'Validation failure should set status.'
+  );
+  assertContains_(
+    result.sheet.getValueByHeader('Email Error'),
+    'PDF Drive link',
+    'Validation failure should write PDF error.'
+  );
+  assertEquals_(false, result.sheet.getValueByHeader('Send Email'), 'Validation failure should reset checkbox.');
+}
+
+function testSummarySendEmailMissingPdfBlocks_() {
+  const result = runSummaryEmailServiceTest_({
+    driveFileGetter() {
+      throw new Error('missing file');
+    }
+  });
+
+  assertEquals_('validation_failed', result.sendResult.status, 'Unreadable PDF should fail validation.');
+  assertEquals_(0, result.sentEmails.length, 'Unreadable PDF should not send.');
+  assertContains_(
+    result.sheet.getValueByHeader('Email Error'),
+    'missing file',
+    'Unreadable PDF should write Drive error.'
+  );
+  assertEquals_(false, result.sheet.getValueByHeader('Send Email'), 'Unreadable PDF should reset checkbox.');
+}
+
+function testSummarySendEmailSubjectPlaceholders_() {
+  const result = runSummaryEmailServiceTest_({
+    values: {
+      'Member': '',
+      'Order No.': ''
+    }
+  });
+
+  assertEquals_(
+    'HX Part Pick: (blank member) - (blank order)',
+    result.sentEmails[0].subject,
+    'Blank subject fields should use placeholders.'
+  );
+}
+
+function testSummarySendEmailBodyIncludesLinks_() {
+  const result = runSummaryEmailServiceTest_({});
+  const body = result.sentEmails[0].body;
+
+  assertContains_(body, 'HX Part Pick', 'Email body should include heading.');
+  assertContains_(body, 'Spreadsheet: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit', 'Email body should include spreadsheet link.');
+  assertContains_(body, 'PDF: https://drive.google.com/file/d/PDF_FILE_ID_1234567890/view', 'Email body should include PDF link.');
+  assertContains_(body, 'Carrier: AP', 'Email body should include row details.');
+  assertContains_(body, 'Validation / Status Note:', 'Email body should include validation note heading.');
+  assertContains_(body, 'Validation note for test', 'Email body should include validation note.');
+}
+
+function testSummarySendEmailAttachesPdfBlob_() {
+  const result = runSummaryEmailServiceTest_({});
+  const attachments = result.sentEmails[0].attachments;
+
+  assertEquals_(1, attachments.length, 'Email should include one attachment.');
+  assertEquals_('test.pdf', attachments[0].name, 'PDF blob should be attached and named.');
+}
+
+function testSummarySendEmailExceptionBlocksRetry_() {
+  const result = runSummaryEmailServiceTest_({
+    mailSender() {
+      throw new Error('forced send failure');
+    }
+  });
+
+  assertEquals_('send_failed_blocked', result.sendResult.status, 'Send exception should block retry.');
+  assertEquals_(
+    SummaryEmailService.STATUS_SEND_FAILED_BLOCKED,
+    result.sheet.getValueByHeader('Email Status'),
+    'Send exception should write blocked status.'
+  );
+  assertContains_(
+    result.sheet.getValueByHeader('Email Error'),
+    'forced send failure',
+    'Send exception should write error.'
+  );
+  assertEquals_(false, result.sheet.getValueByHeader('Send Email'), 'Send exception should reset checkbox.');
 }
 
 function testCoordinatorRefreshProcessesOneRow_() {
@@ -2242,6 +2543,32 @@ function buildMockSummaryRefreshEditEvent_(options) {
   };
 }
 
+function buildMockSummarySendEmailEditEvent_(options) {
+  const sendCol = options.sendCol || CONFIG.summary.columns.length + 1;
+  const headers = new Array(Math.max(sendCol, options.col || sendCol)).fill('');
+
+  headers[0] = '_Key';
+  headers[sendCol - 1] = 'Send Email';
+
+  const sheet = buildMockSummarySheet_(options.sheetName, headers);
+  const range = {
+    valueSet: undefined,
+    getNumRows: () => options.numRows || 1,
+    getNumColumns: () => options.numCols || 1,
+    getSheet: () => sheet,
+    getRow: () => options.row,
+    getColumn: () => options.col,
+    setValue(value) {
+      this.valueSet = value;
+    }
+  };
+
+  return {
+    range,
+    value: options.value
+  };
+}
+
 function buildMockSummarySheet_(sheetName, headers) {
   const headerValues = headers || [
     '_Key',
@@ -2262,6 +2589,188 @@ function buildMockSummarySheet_(sheetName, headers) {
         }
       };
     }
+  };
+}
+
+function runSummaryEmailServiceTest_(options) {
+  const settings = options || {};
+  const sentEmails = [];
+  const sheet = buildMockSummaryEmailSheet_(settings);
+
+  SummaryEmailService.setMailSenderForTest_(settings.mailSender || function(email) {
+    sentEmails.push(email);
+  });
+  SummaryEmailService.setDriveFileGetterForTest_(settings.driveFileGetter || function(fileId) {
+    return buildMockPdfDriveFile_(fileId);
+  });
+  SummaryEmailService.setSpreadsheetUrlForTest_(
+    settings.spreadsheetUrl || 'https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit'
+  );
+
+  try {
+    return {
+      sheet,
+      sentEmails,
+      sendResult: SummaryEmailService.sendSummaryRowEmail(
+        sheet,
+        settings.rowNumber || CONFIG.summary.headerRow + 1
+      )
+    };
+  } finally {
+    SummaryEmailService.resetTestDoubles_();
+  }
+}
+
+function buildMockSummaryEmailSheet_(options) {
+  const settings = options || {};
+  const headers = [
+    '_Key',
+    ...CONFIG.summary.columns.map(column => column.header)
+  ];
+  const rowValues = headers.map(header => {
+    const defaults = {
+      '_Key': TEST_PREFIX + 'SUMMARY_EMAIL',
+      '*': '',
+      'PDF': 'Open PDF',
+      'Scanned At': new Date('2026-06-01T09:30:00+10:00'),
+      'Carrier': 'AP',
+      'State': 'VIC',
+      'Customer Name': 'Example Customer',
+      'Member': 'MEM123',
+      'Owner': 'OWN01',
+      'Order No.': '1234567',
+      'Location': '1G20E2',
+      'C Number': 'C123456',
+      'B Number': 'B1234567',
+      'Date Completed': '2026-06-01',
+      'SLA': '0.5',
+      'Refresh EOD': false,
+      'Email Sent At': '',
+      'Email Sent To': '',
+      'Email Status': '',
+      'Email Error': '',
+      'Send Email': true
+    };
+
+    const overrides = settings.values || {};
+
+    return Object.prototype.hasOwnProperty.call(overrides, header)
+      ? overrides[header]
+      : defaults[header] || '';
+  });
+  const notesByHeader = Object.assign(
+    {
+      '*': 'Validation note for test'
+    },
+    settings.notesByHeader || {}
+  );
+  const formulaByHeader = Object.assign(
+    {
+      'PDF': '=HYPERLINK("https://drive.google.com/file/d/PDF_FILE_ID_1234567890/view","Open PDF")'
+    },
+    settings.formulaByHeader || {}
+  );
+  const richTextUrlByHeader = settings.richTextUrlByHeader || {};
+  const protections = [];
+  const sheet = {
+    getName: () => settings.sheetName || CONFIG.summary.sheetName,
+    getLastColumn: () => headers.length,
+    getRange(row, col, rowCount, colCount) {
+      return buildMockSummaryEmailRange_({
+        sheet,
+        headers,
+        rowValues,
+        notesByHeader,
+        formulaByHeader,
+        richTextUrlByHeader,
+        protections,
+        row,
+        col,
+        rowCount: rowCount || 1,
+        colCount: colCount || 1
+      });
+    },
+    getValueByHeader(headerName) {
+      return rowValues[headers.indexOf(headerName)];
+    },
+    protections
+  };
+
+  return sheet;
+}
+
+function buildMockSummaryEmailRange_(state) {
+  const headerName = state.headers[state.col - 1];
+
+  return {
+    getValues() {
+      if (state.row === Number(CONFIG.summary.headerRow || 2)) {
+        return [state.headers.slice(state.col - 1, state.col - 1 + state.colCount)];
+      }
+
+      return [state.rowValues.slice(state.col - 1, state.col - 1 + state.colCount)];
+    },
+    getDisplayValues() {
+      if (state.row === Number(CONFIG.summary.headerRow || 2)) {
+        return [state.headers.slice(state.col - 1, state.col - 1 + state.colCount)];
+      }
+
+      return [state.rowValues
+        .slice(state.col - 1, state.col - 1 + state.colCount)
+        .map(value => value instanceof Date ? value.toISOString() : String(value || ''))];
+    },
+    getValue() {
+      return state.rowValues[state.col - 1];
+    },
+    getDisplayValue() {
+      const value = state.rowValues[state.col - 1];
+
+      return value instanceof Date ? value.toISOString() : String(value || '');
+    },
+    setValue(value) {
+      state.rowValues[state.col - 1] = value;
+      return this;
+    },
+    getFormula() {
+      return state.formulaByHeader[headerName] || '';
+    },
+    getRichTextValue() {
+      const url = state.richTextUrlByHeader[headerName] || '';
+
+      return {
+        getLinkUrl: () => url
+      };
+    },
+    getNote() {
+      return state.notesByHeader[headerName] || '';
+    },
+    protect() {
+      const protection = buildMockProtection_(SummaryEmailService.sentProtectionDescription);
+
+      state.protections.push({
+        headerName,
+        protection
+      });
+
+      return protection;
+    }
+  };
+}
+
+function buildMockPdfDriveFile_(fileId) {
+  const blob = {
+    fileId,
+    name: '',
+    setName(name) {
+      this.name = name;
+      return this;
+    }
+  };
+
+  return {
+    getMimeType: () => MimeType.PDF,
+    getName: () => 'test.pdf',
+    getBlob: () => blob
   };
 }
 

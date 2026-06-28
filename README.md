@@ -15,9 +15,10 @@ HX Part Picks is a Google Apps Script automation for ingesting warehouse Part Pi
    - `RP_Pallet_and_Product_by_Member.csv`
    - `RP_OUTSTANDING_ORDERS.csv`
 9. Validation colours and notes are written to the `*` summary column.
-10. Processed page and batch keys are written to `_Processed Keys`.
-11. PDFs are archived in Drive under `Part Pick Automation/Processed PDFs`.
-12. Successfully processed or duplicate-clean Gmail threads are labeled, marked read, and archived.
+10. Operators can check `Send Email` on reviewed summary rows to send the row details and original PDF attachment to the configured recipient.
+11. Processed page and batch keys are written to `_Processed Keys`.
+12. PDFs are archived in Drive under `Part Pick Automation/Processed PDFs`.
+13. Successfully processed or duplicate-clean Gmail threads are labeled, marked read, and archived.
 
 ## Google Services And Scopes
 
@@ -27,6 +28,7 @@ The Apps Script project is bound to a Google Sheet and uses these manifest scope
 - `https://www.googleapis.com/auth/drive`
 - `https://www.googleapis.com/auth/gmail.modify`
 - `https://www.googleapis.com/auth/script.external_request`
+- `https://www.googleapis.com/auth/script.send_mail`
 
 External requests are made to Gemini and the PDF splitter service.
 
@@ -102,6 +104,9 @@ This repo has no `package.json` and no local test runner. Apps Script tests run 
 - EOD header mismatch: required headers are matched after trimming, lowercasing, BOM stripping, and whitespace collapse. Missing required columns throw an EOD lookup error.
 - Validation colours: green means OK or corrected, yellow means no match/blocked, red means mismatch.
 - Manual EOD refresh: correct values directly on a `Part Pick Summary` row, then check that row's `Refresh EOD` checkbox. The installable edit trigger reruns EOD checks for that row only and resets the checkbox.
+- Send summary email: review/correct an existing `Part Pick Summary` row, then check `Send Email`. The installable edit trigger sends one plain-text email with the row details and original PDF attached to `jesse.lang.04@gmail.com`, records sent status, leaves the checkbox checked, and best-effort locks the sent email cells.
+- Email duplicate prevention: `Email Sent At` and `Email Status` are durable row-level guards. Rows marked `SENT`, `SENDING`, `SEND_FAILED_BLOCKED`, `UNKNOWN`, or another nonblank blocking status do not send automatically again.
+- Email failure reset: an admin must verify whether an email was sent before clearing `Email Sent At`, `Email Sent To`, `Email Status`, `Email Error`, removing any sent email cell protections, and retrying.
 - Apps Script timeout: reduce `CONFIG.gmail.maxThreadsPerRun`, rerun later, and rely on batch/page dedupe for partial retries.
 
 ## Safety Rules
@@ -112,6 +117,7 @@ This repo has no `package.json` and no local test runner. Apps Script tests run 
 - Internal implementation sheets are protected by setup; `Part Pick Summary` is the normal editable sheet for users.
 - Summary append is append-only and must not overwrite existing rows.
 - `Refresh EOD` only reruns EOD checks on an existing summary row. It must not reprocess Gmail, PDFs, Gemini extraction, Drive archive, labels, dedupe keys, or raw `Part Picks` rows.
+- `Send Email` only sends the existing summary row and attached archived PDF. It must not reprocess Gmail, PDFs, Gemini extraction, Drive archive, labels, dedupe keys, or raw `Part Picks` rows.
 - Gmail thread labels are visibility only; processed-key dedupe controls reprocessing.
 - Do not remove the Inbox-only Gmail query behavior without understanding printer thread behavior.
 - Do not use order-only Outstanding Orders matching.

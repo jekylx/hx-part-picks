@@ -12,6 +12,7 @@ The test harness:
 - Validates raw row append behavior.
 - Validates append-only summary behavior.
 - Validates the `Refresh EOD` checkbox config, edit filtering, trigger duplicate helper, and one-row coordinator refresh routing.
+- Validates the `Send Email` checkbox config, edit filtering, duplicate-send guards, validation failures, subject/body composition, PDF attachment handling, and blocked send failures with stubbed mail/Drive services.
 - Validates batch/page processing key stability.
 - Validates EOD normalization helpers.
 - Validates Outstanding Orders Order+B matching and blocked cases.
@@ -19,6 +20,7 @@ The test harness:
 - Checks the PDF processor health endpoint.
 
 The tests do not read real printer emails or call Gemini extraction.
+The summary email tests do not send real emails and do not read real Drive files; they stub the mail sender and Drive file lookup.
 
 ## Adding Tests
 
@@ -77,5 +79,6 @@ git -c safe.directory=C:/path/to/hx-part-picks diff --check
 - Confirm `Part Pick Summary` appended one row and did not overwrite existing manual rows.
 - Confirm EOD validation notes/colours are reasonable.
 - Correct a summary row in a controlled test, check `Refresh EOD`, and confirm only that row's EOD validation refreshes and the checkbox resets.
+- On a controlled reviewed summary row, check `Send Email` and confirm exactly one email is sent to `jesse.lang.04@gmail.com`, the PDF is attached, `Email Status` becomes `SENT`, `Email Sent At`/`Email Sent To` are filled, and checking again does not send a duplicate.
 - Confirm Gmail thread labeling, read state, and archive behavior.
 - Confirm `Processing Log` has no unexpected critical errors.

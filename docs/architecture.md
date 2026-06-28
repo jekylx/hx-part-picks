@@ -18,6 +18,7 @@ HX Part Picks is a single Apps Script project. Source is organized into service-
 - `PromptService.js`: extraction prompt builder.
 - `SheetService.js`: raw sheet, log sheet, processed key sheet, configuration sheet setup, raw row append.
 - `SummaryService.js`: append-only summary creation, summary formatting, SLA formulas.
+- `SummaryEmailService.js`: sends reviewed summary row details and the original Drive PDF attachment when `Send Email` is checked; records durable email status and blocks duplicate sends.
 - `DedupeService.js`: processed key lookup and writes.
 - `DriveService.js`: Drive folder creation and PDF archive naming.
 - `EodReportCsvService.js`: EOD report Gmail search, CSV parsing, required header lookup.
@@ -47,6 +48,7 @@ Gmail Inbox printer thread
   -> Part Pick Summary append-only row
   -> EOD CSV report lookups
   -> validation colours/notes
+  -> optional reviewed-row email with archived PDF attachment
   -> processed Gmail label + archive
 ```
 
@@ -92,3 +94,11 @@ EOD reports are searched separately from `donotreply@paperlesswms.com.au`, with 
 - Page key: `BATCH::<same hash>::PAGE-<pageNumber>`.
 
 The batch key is written only when all pages are accounted for. Page keys allow partial retry safety and compatibility with older rows that may not have a batch key.
+
+## Summary Email Sends
+
+The installable edit trigger still points to `handleSummaryRefreshEdit(e)`. That handler routes checked `Refresh EOD` edits to one-row EOD refresh and checked `Send Email` edits to `SummaryEmailService`.
+
+`Send Email` only operates on the existing `Part Pick Summary` row. It reads the summary `PDF` Drive link, supports rich text links, `HYPERLINK` formulas, and raw Drive URLs, fetches the Drive PDF blob, and sends via `MailApp.sendEmail()` to `CONFIG.summaryEmail.recipient`.
+
+Duplicate prevention is row-local and durable: a nonblank `Email Sent At`, `Email Status = SENT`, or another blocking email status prevents another send. The checkbox is left checked after success, but it is not the source of truth.

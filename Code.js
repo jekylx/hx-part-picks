@@ -29,14 +29,23 @@ function setup() {
 }
 
 function handleSummaryRefreshEdit(e) {
-  if (!isSummaryRefreshEdit_(e)) {
+  const route = getSummaryEditRoute_(e);
+
+  if (!route) {
     return;
   }
 
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
 
-  refreshSummaryRowFromEdit_(e, lock);
+  if (route === 'refresh_eod') {
+    refreshSummaryRowFromEdit_(e, lock);
+    return;
+  }
+
+  if (route === 'send_email') {
+    SummaryEmailService.sendSummaryRowFromEdit(e, lock);
+  }
 }
 
 function refreshSummaryRowFromEdit_(e, lock) {
@@ -71,6 +80,26 @@ function installSummaryRefreshTrigger() {
 }
 
 function isSummaryRefreshEdit_(e) {
+  return isSummaryCheckboxEditForHeader_(e, 'Refresh EOD');
+}
+
+function isSummarySendEmailEdit_(e) {
+  return isSummaryCheckboxEditForHeader_(e, 'Send Email');
+}
+
+function getSummaryEditRoute_(e) {
+  if (isSummaryRefreshEdit_(e)) {
+    return 'refresh_eod';
+  }
+
+  if (isSummarySendEmailEdit_(e)) {
+    return 'send_email';
+  }
+
+  return '';
+}
+
+function isSummaryCheckboxEditForHeader_(e, headerName) {
   if (!e || !e.range) {
     return false;
   }
@@ -94,12 +123,9 @@ function isSummaryRefreshEdit_(e) {
     return false;
   }
 
-  const refreshColumn = getSummaryColumnIndexByHeader_(
-    sheet,
-    'Refresh EOD'
-  );
+  const actionColumn = getSummaryColumnIndexByHeader_(sheet, headerName);
 
-  if (refreshColumn <= 0 || range.getColumn() !== refreshColumn) {
+  if (actionColumn <= 0 || range.getColumn() !== actionColumn) {
     return false;
   }
 

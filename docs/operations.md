@@ -40,6 +40,20 @@ If a parsed summary value is wrong, edit the value directly on the existing `Par
 
 This does not append a summary row, touch raw `Part Picks` rows, process printer emails, process PDFs, call Gemini, archive files, change Gmail labels, or change processed keys.
 
+## Send Summary Email
+
+After reviewing and correcting an existing `Part Pick Summary` row, check that row's `Send Email` checkbox. The same installable edit trigger used by `Refresh EOD` routes the edit to the summary email sender. It sends one plain-text email to `jesse.lang.04@gmail.com` with summary row details, the spreadsheet link, the Drive PDF link, and the original PDF attached.
+
+After a successful send, the script records `Email Sent At`, `Email Sent To`, and `Email Status = SENT`, clears `Email Error`, leaves `Send Email` checked, and best-effort protects `Send Email`, `Email Sent At`, `Email Sent To`, `Email Status`, and `Email Error` with the protection description `HX Part Picks sent email lock`.
+
+The durable duplicate guard is the email status data, not the checkbox. If `Email Sent At` is nonblank or `Email Status` is `SENT`, `SENDING`, `SEND_FAILED_BLOCKED`, `UNKNOWN`, or another nonblank blocking status, checking `Send Email` again will not send another email.
+
+If validation fails before sending, such as a missing or unreadable PDF link, the script writes `Email Status = VALIDATION_FAILED`, writes `Email Error`, resets `Send Email` to unchecked, and does not send.
+
+If the send attempt throws after the row is reserved, the script writes `Email Status = SEND_FAILED_BLOCKED`, writes `Email Error`, and leaves the row visibly blocked. No duplicate email is more important than automatic retry. An admin must verify whether an email was sent before clearing `Email Sent At`, `Email Sent To`, `Email Status`, `Email Error`, removing any sent email cell protections, and retrying.
+
+This email path does not append a summary row, touch raw `Part Picks` rows, process printer emails, process PDFs, call Gemini, archive files, change Gmail labels, or change processed keys.
+
 ## Labels
 
 - `PartPick/Processed`: added when at least one PDF was processed or duplicate-clean skipped and no critical failure occurred.
@@ -94,4 +108,4 @@ In Apps Script:
 6. Run `clasp push`.
 7. Run `runLocalTests()` in Apps Script.
 8. If trigger code changed, run `installSummaryRefreshTrigger()` and confirm it did not create duplicates.
-9. Smoke test with controlled input before relying on the trigger.
+9. Smoke test with controlled input before relying on the trigger. For `Send Email`, use a reviewed test summary row and confirm exactly one email is sent to the configured recipient with the PDF attached.

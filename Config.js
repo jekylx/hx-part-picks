@@ -149,7 +149,16 @@ const CONFIG = {
       { header: 'Date Completed', manual: true, type: 'date' },
       { header: 'SLA', type: 'sla' },
       { header: 'Refresh EOD', manual: true, type: 'checkbox' },
+      { header: 'Email Sent At', manual: true, type: 'datetime' },
+      { header: 'Email Sent To', manual: true, type: 'text' },
+      { header: 'Email Status', manual: true, type: 'text' },
+      { header: 'Email Error', manual: true, type: 'text' },
+      { header: 'Send Email', manual: true, type: 'checkbox' },
     ],
+  },
+
+  summaryEmail: {
+    recipient: 'jesse.lang.04@gmail.com'
   },
 
   eodReports: {

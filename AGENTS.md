@@ -26,6 +26,8 @@ clasp push
 - Do not remove sheet protections casually; internal sheets are protected by default and `Part Pick Summary` is the only normal editable sheet.
 - Do not overwrite existing summary rows.
 - Do not use `Refresh EOD` as a reprocessing path for Gmail, PDFs, Gemini, archive, labels, dedupe keys, or raw `Part Picks`.
+- Do not use `Send Email` as a reprocessing path for Gmail, PDFs, Gemini, archive, labels, dedupe keys, or raw `Part Picks`.
+- Do not clear email sent/blocked status casually; verify whether an email was sent before allowing retry.
 - Do not change Pallet/Product C/B/location correction policy without explicit approval.
 - Do not trust Outstanding Orders by Order No. alone.
 - Never commit secrets, API keys, clasp auth files, private email contents, or sensitive IDs.
@@ -64,6 +66,8 @@ Summary append rules:
 - Manual and formula columns are not script-owned.
 - EOD enrichment applies after new rows are appended.
 - `Refresh EOD` is a manual checkbox on existing summary rows. It reruns EOD checks for that row only and must not append rows or call ingestion services.
+- `Send Email` is a manual checkbox on existing summary rows. It sends the current summary row details and original Drive PDF attachment to `jesse.lang.04@gmail.com`, then records durable email status and leaves the checkbox checked.
+- Email duplicate prevention uses `Email Sent At` and `Email Status`, not checkbox state alone. Blocking statuses require admin review/reset before retry.
 
 EOD report enrichment rules:
 

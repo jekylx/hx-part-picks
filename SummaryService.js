@@ -219,8 +219,12 @@ const SummaryService = {
   },
 
   applySummaryNumberFormats_(sheet, headers) {
-    const enteredCol = this.getEnteredColumn_(headers);
-    const completedCol = this.getCompletedColumn_(headers);
+    const datetimeCols = this.getConfiguredColumnIndexes_(headers, column =>
+      column.type === 'datetime'
+    );
+    const dateCols = this.getConfiguredColumnIndexes_(headers, column =>
+      column.type === 'date'
+    );
     const slaCol = this.getSlaColumn_(headers);
     const startRow = this.summaryDataStartRow_();
     const rowCount = sheet.getMaxRows() - startRow + 1;
@@ -229,17 +233,17 @@ const SummaryService = {
       return;
     }
 
-    if (enteredCol > 0) {
+    datetimeCols.forEach(col => {
       sheet
-        .getRange(startRow, enteredCol, rowCount, 1)
+        .getRange(startRow, col, rowCount, 1)
         .setNumberFormat('dd/mm/yyyy hh:mm');
-    }
+    });
 
-    if (completedCol > 0) {
+    dateCols.forEach(col => {
       sheet
-        .getRange(startRow, completedCol, rowCount, 1)
+        .getRange(startRow, col, rowCount, 1)
         .setNumberFormat('dd/mm/yyyy');
-    }
+    });
 
     if (slaCol > 0) {
       sheet
@@ -376,6 +380,13 @@ const SummaryService = {
     }
 
     return headers.indexOf(column.header) + 1;
+  },
+
+  getConfiguredColumnIndexes_(headers, matcher) {
+    return CONFIG.summary.columns
+      .filter(matcher)
+      .map(column => headers.indexOf(column.header) + 1)
+      .filter(col => col > 0);
   },
 
   getSheetHeaders_(sheet) {

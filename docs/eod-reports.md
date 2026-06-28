@@ -2,7 +2,7 @@
 
 EOD enrichment runs after new summary rows are appended. It searches Gmail for CSV reports matching the summary row's `Scanned At` date and writes corrections, notes, and validation colour to the summary row.
 
-Existing summary rows can also be refreshed manually. Edit the row values first, then check the row's `Refresh EOD` checkbox. The installable `handleSummaryRefreshEdit(e)` trigger reruns EOD checks for that single row only and resets the checkbox.
+Existing summary rows can also be refreshed manually. Edit the row values first, then check the row's `Refresh EOD` checkbox. The installable `handleSummaryRefreshEdit(e)` trigger routes summary checkbox edits; for `Refresh EOD`, it reruns EOD checks for that single row only and resets the checkbox.
 
 ## Report Discovery
 
