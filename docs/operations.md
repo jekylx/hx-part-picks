@@ -15,9 +15,18 @@
    - `Processing Log`
    - `_Processed Keys`
    - `Configuration`
-7. Confirm Drive folder `Part Pick Automation/Processed PDFs` exists.
-8. Create one time-driven trigger for `processPrinterEmails()`.
-9. Run `installSummaryRefreshTrigger()` once to create the installable edit trigger for `handleSummaryRefreshEdit(e)`.
+7. Confirm internal sheets are hidden and protected, while `Part Pick Summary` remains editable.
+8. Confirm Drive folder `Part Pick Automation/Processed PDFs` exists.
+9. Create one time-driven trigger for `processPrinterEmails()`.
+10. Run `installSummaryRefreshTrigger()` once to create the installable edit trigger for `handleSummaryRefreshEdit(e)`.
+
+## Sheet Protection
+
+`setup()` applies a sheet-level protection named `HX Part Picks protected internal sheet` to every sheet except `CONFIG.summary.sheetName` (`Part Pick Summary`). It also removes only that script-owned protection from the summary sheet if it is ever found there.
+
+The protected internal sheets are still writable by the spreadsheet owner or script-running user, so automation can append raw rows, log entries, and processed keys. Normal users should edit only `Part Pick Summary`, including manual corrections and the `Refresh EOD` checkbox.
+
+If internal sheet protection is removed or permissions drift, rerun `setup()` manually from Apps Script to reapply protections. Do not remove unrelated/manual protections unless their purpose is understood.
 
 ## Daily Behavior
 

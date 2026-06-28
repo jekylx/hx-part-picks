@@ -4,7 +4,7 @@ HX Part Picks is a single Apps Script project. Source is organized into service-
 
 ## Entry Points
 
-- `setup()`: manual setup only. Creates Gmail labels, sheets, Drive folders, missing summary rows, and hides implementation sheets.
+- `setup()`: manual setup only. Creates Gmail labels, sheets, Drive folders, missing summary rows, protects implementation sheets, and hides implementation sheets.
 - `processPrinterEmails()`: production processor. Searches Gmail, processes PDFs, writes rows, dedupes, archives, labels, and updates summary rows.
 - `runLocalTests()`: Apps Script test harness. Does not read real printer emails or call Gemini, but it does include a PDF processor health check.
 
@@ -53,11 +53,13 @@ Gmail Inbox printer thread
 ## Sheets And Tabs
 
 - `Part Picks`: raw ingestion sheet. Stores processing metadata, Drive link, extraction status, and raw Gemini field output as text.
-- `Part Pick Summary`: operator-facing sheet. Header row is configured as row 2. Column A `_Key` is hidden and stores the processing key.
+- `Part Pick Summary`: operator-facing sheet. Header row is configured as row 2. Column A `_Key` is hidden and stores the processing key. This is the only normal user-editable sheet.
 - `Processing Log`: status/error log rows.
 - `_Processed Keys`: dedupe state for batch and page processing keys.
 - `Configuration`: generated field configuration reference.
 - `Test Results`: created by `runLocalTests()`.
+
+All sheets except `Part Pick Summary` are internal implementation tabs. `setup()` hides them and applies the recognizable sheet-level protection `HX Part Picks protected internal sheet`.
 
 ## Drive Folders
 

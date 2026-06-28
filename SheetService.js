@@ -1,4 +1,6 @@
 const SheetService = {
+  internalProtectionDescription: 'HX Part Picks protected internal sheet',
+
   setupSheets() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -164,6 +166,151 @@ const SheetService = {
         sheet.hideSheet();
       }
     });
+  },
+
+  protectImplementationSheets() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const summaryName = CONFIG.summary.sheetName;
+    const effectiveUser = Session.getEffectiveUser();
+
+    ss.getSheets().forEach(sheet => {
+      if (sheet.getName() === summaryName) {
+        this.removeScriptInternalProtections_(sheet);
+        return;
+      }
+
+      this.ensureInternalSheetProtection_(sheet, effectiveUser);
+    });
+  },
+
+  ensureInternalSheetProtection_(sheet, effectiveUser) {
+    const protections = this.getScriptInternalProtections_(sheet);
+    let protection = protections[0];
+
+    if (!protection) {
+      protection = sheet.protect();
+      protection.setDescription(this.internalProtectionDescription);
+    }
+
+    protections.slice(1).forEach(duplicate => {
+      try {
+        duplicate.remove();
+      } catch (err) {
+        Logger.log(
+          `Could not remove duplicate HX sheet protection on ${sheet.getName()}: ${this.stringifyProtectionError_(err)}`
+        );
+      }
+    });
+
+    protection.setDescription(this.internalProtectionDescription);
+
+    try {
+      if (
+        typeof protection.setWarningOnly === 'function' &&
+        typeof protection.isWarningOnly === 'function' &&
+        protection.isWarningOnly()
+      ) {
+        protection.setWarningOnly(false);
+      }
+    } catch (err) {
+      Logger.log(
+        `Could not enforce strict sheet protection on ${sheet.getName()}: ${this.stringifyProtectionError_(err)}`
+      );
+    }
+
+    if (
+      typeof protection.isWarningOnly === 'function' &&
+      protection.isWarningOnly()
+    ) {
+      throw new Error(
+        `Internal sheet protection for ${sheet.getName()} is warning-only, not enforced.`
+      );
+    }
+
+    this.disableDomainEditing_(protection, sheet.getName());
+    this.keepOnlyEffectiveUserEditor_(protection, effectiveUser, sheet.getName());
+  },
+
+  removeScriptInternalProtections_(sheet) {
+    this.getScriptInternalProtections_(sheet).forEach(protection => {
+      try {
+        protection.remove();
+      } catch (err) {
+        Logger.log(
+          `Could not remove HX internal protection from editable summary sheet ${sheet.getName()}: ${this.stringifyProtectionError_(err)}`
+        );
+      }
+    });
+  },
+
+  getScriptInternalProtections_(sheet) {
+    return sheet
+      .getProtections(SpreadsheetApp.ProtectionType.SHEET)
+      .filter(protection =>
+        protection.getDescription() === this.internalProtectionDescription
+      );
+  },
+
+  disableDomainEditing_(protection, sheetName) {
+    try {
+      if (
+        typeof protection.canDomainEdit === 'function' &&
+        protection.canDomainEdit()
+      ) {
+        protection.setDomainEdit(false);
+      }
+    } catch (err) {
+      Logger.log(
+        `Could not disable domain editing on protected sheet ${sheetName}: ${this.stringifyProtectionError_(err)}`
+      );
+    }
+  },
+
+  keepOnlyEffectiveUserEditor_(protection, effectiveUser, sheetName) {
+    const effectiveEmail = this.getUserEmail_(effectiveUser);
+
+    if (!effectiveEmail) {
+      Logger.log(
+        `Could not determine effective user email for protected sheet ${sheetName}; skipping editor cleanup.`
+      );
+      return;
+    }
+
+    try {
+      if (effectiveUser && typeof protection.addEditor === 'function') {
+        protection.addEditor(effectiveUser);
+      }
+    } catch (err) {
+      Logger.log(
+        `Could not explicitly add effective user to protected sheet ${sheetName}: ${this.stringifyProtectionError_(err)}`
+      );
+    }
+
+    try {
+      const removableEditors = protection
+        .getEditors()
+        .filter(editor => this.getUserEmail_(editor) !== effectiveEmail);
+
+      if (removableEditors.length > 0) {
+        protection.removeEditors(removableEditors);
+      }
+    } catch (err) {
+      Logger.log(
+        `Could not remove all extra editors from protected sheet ${sheetName}: ${this.stringifyProtectionError_(err)}`
+      );
+    }
+  },
+
+  getUserEmail_(user) {
+    if (!user || typeof user.getEmail !== 'function') {
+      return '';
+    }
+
+    return String(user.getEmail() || '').toLowerCase();
+  },
+
+  stringifyProtectionError_(err) {
+    return err && err.stack ? String(err.stack) : String(err);
   },
 
   ensureHeaders_(sheet, headers) {

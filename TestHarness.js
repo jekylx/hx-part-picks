@@ -67,6 +67,9 @@ function runLocalTests() {
   runTest_('Pallet/Product Member requires unique B and Owner match', testPalletProductMemberRequiresUniqueBAndOwner_, results);
   runTest_('Prompt contains raw extraction rules', testPromptRules_, results);
   runTest_('Sheet setup creates expected sheets', testSheetSetup_, results);
+  runTest_('Sheet setup protects implementation sheets', testSheetSetupProtectsImplementationSheets_, results);
+  runTest_('Sheet protection helper is idempotent', testSheetProtectionHelperIdempotent_, results);
+  runTest_('Summary sheet removes only HX internal protection', testSummaryProtectionCleanup_, results);
   runTest_('Summary setup applies Refresh EOD checkbox validation', testSummaryCheckboxValidation_, results);
   runTest_('Summary refresh edit handler filters edits strictly', testSummaryRefreshEditFilter_, results);
   runTest_('Summary refresh edit handler refreshes checked rows', testSummaryRefreshEditHandlerCallsRefresh_, results);
@@ -1599,6 +1602,85 @@ function testSheetSetup_() {
   });
 }
 
+function testSheetSetupProtectsImplementationSheets_() {
+  setup();
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const internalSheetNames = [
+    CONFIG.sheets.extractedSheetName,
+    CONFIG.sheets.logSheetName,
+    CONFIG.sheets.processedSheetName,
+    CONFIG.sheets.configSheetName
+  ];
+
+  internalSheetNames.forEach(sheetName => {
+    const sheet = ss.getSheetByName(sheetName);
+    const protections = SheetService.getScriptInternalProtections_(sheet);
+
+    assertEquals_(
+      1,
+      protections.length,
+      `Expected exactly one HX internal sheet protection on ${sheetName}.`
+    );
+    assertEquals_(
+      SheetService.internalProtectionDescription,
+      protections[0].getDescription(),
+      `Unexpected protection description on ${sheetName}.`
+    );
+  });
+
+  const summarySheet = ss.getSheetByName(CONFIG.summary.sheetName);
+
+  assertEquals_(
+    0,
+    SheetService.getScriptInternalProtections_(summarySheet).length,
+    'Summary sheet must not keep HX internal sheet protection.'
+  );
+}
+
+function testSheetProtectionHelperIdempotent_() {
+  const effectiveUser = buildMockUser_('owner@example.com');
+  const sheet = buildMockProtectableSheet_('Part Picks', []);
+
+  SheetService.ensureInternalSheetProtection_(sheet, effectiveUser);
+  SheetService.ensureInternalSheetProtection_(sheet, effectiveUser);
+
+  const activeProtections = sheet.protections.filter(protection => !protection.removed);
+
+  assertEquals_(1, activeProtections.length, 'Repeated protection setup should not create duplicates.');
+  assertEquals_(
+    SheetService.internalProtectionDescription,
+    activeProtections[0].getDescription(),
+    'Internal protection description should be recognizable.'
+  );
+  assertEquals_(false, activeProtections[0].domainEdit, 'Domain editing should be disabled.');
+  assertEquals_(false, activeProtections[0].warningOnly, 'Internal protection should not be warning-only.');
+  assertEquals_(
+    1,
+    activeProtections[0].editors.length,
+    'Only the effective user should remain as explicit editor.'
+  );
+  assertEquals_(
+    'owner@example.com',
+    activeProtections[0].editors[0].getEmail(),
+    'Effective user should be retained as editor.'
+  );
+}
+
+function testSummaryProtectionCleanup_() {
+  const hxProtection = buildMockProtection_(SheetService.internalProtectionDescription);
+  const manualProtection = buildMockProtection_('Manual finance lock');
+  const summarySheet = buildMockProtectableSheet_(
+    CONFIG.summary.sheetName,
+    [hxProtection, manualProtection]
+  );
+
+  SheetService.removeScriptInternalProtections_(summarySheet);
+
+  assertEquals_(true, hxProtection.removed, 'HX internal protection should be removed from summary.');
+  assertEquals_(false, manualProtection.removed, 'Manual summary protections should not be removed.');
+}
+
 function testSummaryCheckboxValidation_() {
   setup();
 
@@ -2190,6 +2272,105 @@ function buildMockLock_() {
       this.released = true;
     }
   };
+}
+
+function buildMockUser_(email) {
+  return {
+    getEmail: () => email
+  };
+}
+
+function buildMockProtectableSheet_(name, protections) {
+  const sheet = {
+    protections: protections || [],
+    getName: () => name,
+    getProtections: () => sheet.protections.filter(protection => !protection.removed),
+    protect() {
+      const protection = buildMockProtection_('');
+
+      sheet.protections.push(protection);
+
+      return protection;
+    }
+  };
+
+  return sheet;
+}
+
+function buildMockProtection_(description, options) {
+  const settings = options || {};
+  const protection = {
+    description: description || '',
+    removed: false,
+    domainEdit: settings.domainEdit == null ? true : settings.domainEdit,
+    warningOnly: settings.warningOnly == null ? true : settings.warningOnly,
+    editors: settings.editors || [
+      buildMockUser_('owner@example.com'),
+      buildMockUser_('normal.user@example.com')
+    ],
+
+    getDescription() {
+      return this.description;
+    },
+
+    setDescription(value) {
+      this.description = value;
+      return this;
+    },
+
+    remove() {
+      this.removed = true;
+    },
+
+    canDomainEdit() {
+      return this.domainEdit;
+    },
+
+    setDomainEdit(value) {
+      this.domainEdit = value;
+      return this;
+    },
+
+    isWarningOnly() {
+      return this.warningOnly;
+    },
+
+    setWarningOnly(value) {
+      this.warningOnly = value;
+      return this;
+    },
+
+    addEditor(user) {
+      const email = user && user.getEmail ? user.getEmail() : '';
+
+      if (
+        email &&
+        !this.editors.some(editor => editor.getEmail() === email)
+      ) {
+        this.editors.push(user);
+      }
+
+      return this;
+    },
+
+    getEditors() {
+      return this.editors.slice();
+    },
+
+    removeEditors(editors) {
+      const removeEmails = {};
+
+      (editors || []).forEach(editor => {
+        removeEmails[editor.getEmail()] = true;
+      });
+
+      this.editors = this.editors.filter(editor => !removeEmails[editor.getEmail()]);
+
+      return this;
+    }
+  };
+
+  return protection;
 }
 
 function runPalletProductRowTest_(options) {

@@ -22,6 +22,7 @@ function setup() {
   SheetService.setupSheets();
   DriveService.setupFolders();
   SummaryService.appendMissingSummaryRows();
+  SheetService.protectImplementationSheets();
   SheetService.hideImplementationSheets();
 
   Logger.log('Setup complete. Add a time trigger for processPrinterEmails.');

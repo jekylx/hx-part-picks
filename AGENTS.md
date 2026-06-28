@@ -23,6 +23,7 @@ clasp push
 - Do not run `setup()` unless the user explicitly approves or the task specifically requires setup.
 - Do not change Gmail query, label, archive, or dedupe logic casually.
 - Do not normalize raw extraction output written to `Part Picks`.
+- Do not remove sheet protections casually; internal sheets are protected by default and `Part Pick Summary` is the only normal editable sheet.
 - Do not overwrite existing summary rows.
 - Do not use `Refresh EOD` as a reprocessing path for Gmail, PDFs, Gemini, archive, labels, dedupe keys, or raw `Part Picks`.
 - Do not change Pallet/Product C/B/location correction policy without explicit approval.

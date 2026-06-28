@@ -57,7 +57,7 @@ Do not commit these values.
    ```powershell
    clasp push
    ```
-8. Run `setup()` manually once from Apps Script. `setup()` creates labels, sheets, folders, summary rows, and hides implementation sheets.
+8. Run `setup()` manually once from Apps Script. `setup()` creates labels, sheets, folders, summary rows, protects and hides implementation sheets, and leaves `Part Pick Summary` editable.
 9. Create a time-driven trigger for `processPrinterEmails()`.
 10. Run `installSummaryRefreshTrigger()` once to create the installable edit trigger for `handleSummaryRefreshEdit(e)`.
 
@@ -109,6 +109,7 @@ This repo has no `package.json` and no local test runner. Apps Script tests run 
 - `setup()` is manual only.
 - `processPrinterEmails()` must not run `setup()`.
 - `Part Picks` stores raw Gemini output and must not be normalized.
+- Internal implementation sheets are protected by setup; `Part Pick Summary` is the normal editable sheet for users.
 - Summary append is append-only and must not overwrite existing rows.
 - `Refresh EOD` only reruns EOD checks on an existing summary row. It must not reprocess Gmail, PDFs, Gemini extraction, Drive archive, labels, dedupe keys, or raw `Part Picks` rows.
 - Gmail thread labels are visibility only; processed-key dedupe controls reprocessing.
