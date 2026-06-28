@@ -32,6 +32,8 @@ function runLocalTests() {
   runTest_('Order number normalisation accepts variable length', testOrderNumberNormalisation_, results);
   runTest_('Outstanding Orders order parsing accepts variable length', testOutstandingOrdersOrderParsing_, results);
   runTest_('EOD strict carrier/state validation helpers work', testEodStrictValidationHelpers_, results);
+  runTest_('EOD result counters include blocked', testEodResultCountersIncludeBlocked_, results);
+  runTest_('EOD result formatting includes blocked', testEodResultFormattingIncludesBlocked_, results);
   runTest_('Outstanding Orders customer correction requires B owner confirmation', testOutstandingOrdersCustomerOwnerGate_, results);
   runTest_('Outstanding Orders blocks customer correction without B owner confirmation', testOutstandingOrdersCustomerOwnerGateBlocks_, results);
   runTest_('Outstanding Orders guards carrier and state corrections', testOutstandingOrdersCarrierStateGuards_, results);
@@ -324,6 +326,8 @@ function testOutstandingOrdersCustomerOwnerGateBlocks_() {
       'does not match B Number owner VWXYZ',
       'Owner mismatch should add a blocked-correction note.'
     );
+    assertEquals_(1, outcome.result.blocked, 'Customer owner mismatch should count as blocked.');
+    assertEquals_(0, outcome.result.notFound, 'Customer owner mismatch should not count as not found.');
   } finally {
     restore();
   }
@@ -355,6 +359,8 @@ function testOutstandingOrdersCustomerOwnerGateBlocks_() {
       'B Number owner could not confirm order owner',
       'Missing owner confirmation should add a blocked-correction note.'
     );
+    assertEquals_(1, outcome.result.blocked, 'Missing owner confirmation should count as blocked.');
+    assertEquals_(0, outcome.result.notFound, 'Missing owner confirmation should not count as not found.');
   } finally {
     restore();
   }
@@ -393,6 +399,8 @@ function testOutstandingOrdersCustomerOwnerGateBlocks_() {
       'B Number owner could not confirm order owner',
       'Ambiguous owner confirmation should add a blocked-correction note.'
     );
+    assertEquals_(1, outcome.result.blocked, 'Ambiguous owner confirmation should count as blocked.');
+    assertEquals_(0, outcome.result.notFound, 'Ambiguous owner confirmation should not count as not found.');
   } finally {
     restore();
   }
@@ -467,6 +475,31 @@ function testOutstandingOrdersCarrierStateGuards_() {
 
   assertContains_(notes, 'Carrier not corrected', 'Invalid report Carrier should add a validation note.');
   assertContains_(notes, 'State not corrected', 'Invalid report State should add a validation note.');
+  assertEquals_(2, outcome.result.blocked, 'Invalid report Carrier/State should count as blocked.');
+  assertEquals_(0, outcome.result.notFound, 'Invalid report Carrier/State should not count as not found.');
+}
+
+function testEodResultCountersIncludeBlocked_() {
+  let result = OutstandingOrdersEodReportService.createResult_();
+
+  assertEquals_(0, result.blocked, 'Outstanding Orders result should include blocked counter.');
+
+  result = PalletAndProductByMembersEodReportService.createResult_();
+
+  assertEquals_(0, result.blocked, 'Pallet/Product result should include blocked counter.');
+}
+
+function testEodResultFormattingIncludesBlocked_() {
+  const formatted = EodReportCoordinator.formatResult_('TEST REPORT', {
+    checked: 1,
+    filled: 2,
+    corrected: 3,
+    mismatched: 4,
+    blocked: 5,
+    notFound: 6
+  });
+
+  assertContains_(formatted, 'blocked=5', 'EOD result formatting should include blocked counter.');
 }
 
 function testPalletProductExactMatchSetsLocation_() {
@@ -567,6 +600,8 @@ function testPalletProductBMatchOwnerMismatchBlocks_() {
     'does not match B Number owner',
     'Owner mismatch should add a blocked-correction note.'
   );
+  assertEquals_(1, outcome.result.blocked, 'Owner mismatch should count as blocked.');
+  assertEquals_(0, outcome.result.notFound, 'Owner mismatch should not count as not found.');
 }
 
 function testPalletProductBMatchMissingOwnerBlocks_() {
@@ -595,6 +630,8 @@ function testPalletProductBMatchMissingOwnerBlocks_() {
     'Summary Owner is missing',
     'Missing owner should add a blocked-correction note.'
   );
+  assertEquals_(1, outcome.result.blocked, 'Missing owner should count as blocked.');
+  assertEquals_(0, outcome.result.notFound, 'Missing owner should not count as not found.');
 }
 
 function testPalletProductBMatchAmbiguousOwnerBlocks_() {
@@ -630,6 +667,8 @@ function testPalletProductBMatchAmbiguousOwnerBlocks_() {
     'B Number ownership is ambiguous',
     'Ambiguous B ownership should add a blocked-correction note.'
   );
+  assertEquals_(1, outcome.result.blocked, 'Ambiguous B ownership should count as blocked.');
+  assertEquals_(0, outcome.result.notFound, 'Ambiguous B ownership should not count as not found.');
 }
 
 function testPalletProductCMatchDoesNotCorrectB_() {
@@ -658,6 +697,9 @@ function testPalletProductCMatchDoesNotCorrectB_() {
     'B Number not corrected: C Number cannot override trusted B Number.',
     'C mismatch should explain that C cannot override B.'
   );
+  assertEquals_(1, outcome.result.blocked, 'C cannot override trusted B should count as blocked.');
+  assertEquals_(1, outcome.result.mismatched, 'C+B contradiction should still count as mismatched.');
+  assertEquals_(0, outcome.result.notFound, 'C+B contradiction should not count as not found.');
 }
 
 function testPalletProductCOnlyEvidenceDoesNotSetLocation_() {
@@ -686,6 +728,8 @@ function testPalletProductCOnlyEvidenceDoesNotSetLocation_() {
     'C-only evidence cannot set Location.',
     'C-only evidence should explain that Location is not trusted.'
   );
+  assertEquals_(1, outcome.result.blocked, 'C-only evidence should count as blocked.');
+  assertEquals_(0, outcome.result.notFound, 'C-only evidence should not count as not found.');
 }
 
 function testPalletProductMismatchDoesNotOverwriteLocation_() {

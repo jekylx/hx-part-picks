@@ -50,6 +50,7 @@ const EodReportCoordinator = {
       `filled=${result.filled}`,
       `corrected=${result.corrected}`,
       result.mismatched == null ? '' : `mismatched=${result.mismatched}`,
+      `blocked=${result.blocked || 0}`,
       `notFound=${result.notFound}`
     ].filter(Boolean).join(' ');
   },

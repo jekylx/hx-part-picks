@@ -133,7 +133,8 @@ const PalletAndProductByMembersEodReportService = {
         lookup,
         bNumber,
         owner,
-        result
+        result,
+        false
       );
 
       const note = this.buildBlockedBNumberCorrectionNote_(
@@ -142,6 +143,8 @@ const PalletAndProductByMembersEodReportService = {
         bCorrectionGate.reason,
         bCorrectionGate.matchOwner
       );
+
+      result.blocked++;
 
       if (cNumber && bNumber) {
         EodReportValidationService.mismatch(
@@ -157,7 +160,6 @@ const PalletAndProductByMembersEodReportService = {
       }
 
       EodReportValidationService.noMatch(validationRows, rowIndex, note);
-      result.notFound++;
       return;
     }
 
@@ -169,7 +171,8 @@ const PalletAndProductByMembersEodReportService = {
         lookup,
         bNumber,
         owner,
-        result
+        result,
+        false
       );
 
       const note = this.buildBlockedBNumberCorrectionNote_(
@@ -177,6 +180,8 @@ const PalletAndProductByMembersEodReportService = {
         owner,
         'ambiguousOwner'
       );
+
+      result.blocked++;
 
       if (cNumber && bNumber) {
         EodReportValidationService.mismatch(
@@ -192,7 +197,6 @@ const PalletAndProductByMembersEodReportService = {
       }
 
       EodReportValidationService.noMatch(validationRows, rowIndex, note);
-      result.notFound++;
       return;
     }
 
@@ -204,13 +208,16 @@ const PalletAndProductByMembersEodReportService = {
         lookup,
         bNumber,
         owner,
-        result
+        result,
+        false
       );
 
       const note = [
         `${reportConfig.displayName}: B Number not corrected: C Number cannot override trusted B Number.`,
         'C-only evidence cannot set Location.'
       ].join('\n');
+
+      result.blocked++;
 
       if (cNumber && bNumber) {
         EodReportValidationService.mismatch(
@@ -226,7 +233,6 @@ const PalletAndProductByMembersEodReportService = {
       }
 
       EodReportValidationService.noMatch(validationRows, rowIndex, note);
-      result.notFound++;
       return;
     }
 
@@ -262,9 +268,10 @@ const PalletAndProductByMembersEodReportService = {
     result.notFound++;
   },
 
-  applyMemberAndProductInfo_(context, validationRows, rowIndex, lookup, bNumber, owner, result) {
+  applyMemberAndProductInfo_(context, validationRows, rowIndex, lookup, bNumber, owner, result, countMissingMember) {
     const summaryColumns = this.reportConfig_().summaryColumns;
     const normalizedBNumber = EodReportNormalisationService.normalizeBNumber(bNumber);
+    const shouldCountMissingMember = countMissingMember !== false;
 
     if (!normalizedBNumber) {
       return;
@@ -297,7 +304,9 @@ const PalletAndProductByMembersEodReportService = {
         rowIndex,
         `${this.reportConfig_().displayName}: no Member No match for B ${normalizedBNumber} and Owner ${owner}.`
       );
-      result.notFound++;
+      if (shouldCountMissingMember) {
+        result.notFound++;
+      }
       return;
     }
 
@@ -666,6 +675,7 @@ const PalletAndProductByMembersEodReportService = {
       filled: 0,
       corrected: 0,
       mismatched: 0,
+      blocked: 0,
       notFound: 0
     };
   },

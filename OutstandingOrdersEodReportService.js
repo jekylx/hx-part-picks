@@ -141,7 +141,7 @@ const OutstandingOrdersEodReportService = {
           rowIndex,
           `${reportConfig.displayName}: Customer Name not corrected: B Number owner could not confirm order owner.`
         );
-        result.notFound++;
+        result.blocked++;
         return false;
       }
 
@@ -151,7 +151,7 @@ const OutstandingOrdersEodReportService = {
           rowIndex,
           `${reportConfig.displayName}: Customer Name not corrected: order owner ${match.owner || '(blank)'} does not match B Number owner ${ownerCheck.owner || '(blank)'}.`
         );
-        result.notFound++;
+        result.blocked++;
         return false;
       }
 
@@ -196,7 +196,7 @@ const OutstandingOrdersEodReportService = {
         rowIndex,
         `${reportConfig.displayName}: ${label} not corrected: report ${label} is blank or invalid.`
       );
-      result.notFound++;
+      result.blocked++;
       return false;
     }
 
@@ -323,6 +323,7 @@ const OutstandingOrdersEodReportService = {
       checked: 0,
       filled: 0,
       corrected: 0,
+      blocked: 0,
       notFound: 0
     };
   },
