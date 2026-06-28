@@ -29,6 +29,9 @@ function runLocalTests() {
 
   runTest_('Config has required blocks', testConfigHasRequiredBlocks_, results);
   runTest_('Gmail query is correct', testGmailQuery_, results);
+  runTest_('Order number normalisation accepts variable length', testOrderNumberNormalisation_, results);
+  runTest_('Outstanding Orders order parsing accepts variable length', testOutstandingOrdersOrderParsing_, results);
+  runTest_('EOD strict carrier/state validation helpers work', testEodStrictValidationHelpers_, results);
   runTest_('Prompt contains raw extraction rules', testPromptRules_, results);
   runTest_('Sheet setup creates expected sheets', testSheetSetup_, results);
   runTest_('Raw row append keeps raw values', testAppendMockRawRow_, results);
@@ -140,6 +143,98 @@ function testGmailQuery_() {
   assertContains_(query, 'newer_than:7d', 'Gmail query missing search window.');
   assertNotContains_(query, '-label:"PartPick/Processed"', 'Gmail query must not exclude processed threads.');
   assertNotContains_(query, '-label:"PartPick/Failed"', 'Gmail query must not exclude failed threads.');
+}
+
+function testOrderNumberNormalisation_() {
+  assertEquals_(
+    '1400385',
+    NormalisationService.normalizeOrderNumber_('140O385'),
+    'Order number should apply OCR-safe digit cleanup.'
+  );
+
+  assertEquals_(
+    '12',
+    NormalisationService.normalizeOrderNumber_('12'),
+    'Short order numbers should be accepted.'
+  );
+
+  assertEquals_(
+    '1234567890',
+    NormalisationService.normalizeOrderNumber_('1234567890'),
+    'Long order numbers should be accepted.'
+  );
+
+  assertEquals_(
+    null,
+    NormalisationService.normalizeOrderNumber_(''),
+    'Blank order number should be invalid.'
+  );
+
+  assertEquals_(
+    null,
+    NormalisationService.normalizeOrderNumber_('ABC'),
+    'Order number with no digits should be invalid.'
+  );
+}
+
+function testOutstandingOrdersOrderParsing_() {
+  let parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('ABC121234567');
+
+  assertEquals_('ABC12', parsed.owner, 'Owner with digits should remain valid.');
+  assertEquals_('1234567', parsed.orderNumber, 'Seven digit order should parse.');
+
+  parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('ABCDE123');
+
+  assertEquals_('ABCDE', parsed.owner, 'Letter owner should parse.');
+  assertEquals_('123', parsed.orderNumber, 'Short order should parse.');
+
+  parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('ABCDE1234567890');
+
+  assertEquals_('ABCDE', parsed.owner, 'Long order owner should parse.');
+  assertEquals_('1234567890', parsed.orderNumber, 'Long order should parse.');
+
+  parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('AB12');
+
+  assertEquals_('', parsed.owner, 'Short owner should be invalid.');
+  assertEquals_('', parsed.orderNumber, 'Short value should have no order after owner.');
+}
+
+function testEodStrictValidationHelpers_() {
+  assertEquals_(
+    'AP',
+    EodReportNormalisationService.normalizeStrictCode(' ap '),
+    'Strict code normalization should trim and uppercase.'
+  );
+
+  ['NXM', 'AP', 'AC'].forEach(carrier => {
+    assertTruthy_(
+      EodReportNormalisationService.isValidCarrier(carrier),
+      `Carrier should be valid: ${carrier}`
+    );
+  });
+
+  ['AUSPOST', 'AUSTRALIA POST', 'NEXDAY', ''].forEach(carrier => {
+    assertEquals_(
+      false,
+      EodReportNormalisationService.isValidCarrier(carrier),
+      `Carrier should be invalid: ${carrier}`
+    );
+  });
+
+  ['NSW', 'VIC', 'ACT', 'WA', 'TAS', 'NT', 'QLD', 'SA'].forEach(state => {
+    assertTruthy_(
+      EodReportNormalisationService.isValidState(state),
+      `State should be valid: ${state}`
+    );
+  });
+
+  ['AUS', 'NZ', ''].forEach(state => {
+    assertEquals_(
+      false,
+      EodReportNormalisationService.isValidState(state),
+      `State should be invalid: ${state}`
+    );
+  });
 }
 
 function testPromptRules_() {

@@ -27,7 +27,7 @@ const NormalisationService = {
       .replace(/[IL]/g, '1')
       .replace(/[^0-9]/g, '');
 
-    return /^(\d{7}|\d{9})$/.test(cleaned) ? cleaned : null;
+    return cleaned ? cleaned : null;
   },
 
   normalizePrefixedSevenDigitCode_(value, prefix) {

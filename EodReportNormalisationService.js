@@ -25,24 +25,12 @@ const EodReportNormalisationService = {
       .replace(/\s+/g, '')
       .replace(/[^A-Z0-9]/g, '');
 
-    const exact = cleaned.match(/^([A-Z]{5})(\d{7})$/);
-
-    if (exact) {
-      return {
-        owner: exact[1],
-        orderNumber: exact[2]
-      };
-    }
-
-    const owner = this.normalizeOwner(cleaned.slice(0, 5));
-    const orderNumber = cleaned.slice(5)
-      .replace(/[OQ]/g, '0')
-      .replace(/[IL]/g, '1')
-      .replace(/[^0-9]/g, '');
+    const owner = cleaned.slice(0, 5);
+    const orderNumber = cleaned.slice(5);
 
     return {
-      owner: /^[A-Z]{5}$/.test(owner) ? owner : '',
-      orderNumber: /^\d{7}$/.test(orderNumber) ? orderNumber : ''
+      owner: /^[A-Z0-9]{5}$/.test(owner) ? owner : '',
+      orderNumber: orderNumber ? orderNumber : ''
     };
   },
 
@@ -99,6 +87,21 @@ const EodReportNormalisationService = {
       .trim()
       .toLowerCase()
       .replace(/\s+/g, ' ');
+  },
+
+  normalizeStrictCode(value) {
+    return String(value || '')
+      .trim()
+      .toUpperCase();
+  },
+
+  isValidCarrier(value) {
+    return ['NXM', 'AP', 'AC'].indexOf(this.normalizeStrictCode(value)) >= 0;
+  },
+
+  isValidState(value) {
+    return ['NSW', 'VIC', 'ACT', 'WA', 'TAS', 'NT', 'QLD', 'SA']
+      .indexOf(this.normalizeStrictCode(value)) >= 0;
   },
 
   toDate(value) {
