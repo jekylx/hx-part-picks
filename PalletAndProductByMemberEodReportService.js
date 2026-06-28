@@ -31,9 +31,8 @@ const PalletAndProductByMembersEodReportService = {
   },
 
   applyRow_(context, validationRows, rowIndex, lookup, dateKey, result) {
-    // Exact C/B pair matches are strongest. A unique single-sided match may
-    // correct the missing/wrong counterpart; ambiguous evidence becomes a
-    // validation note instead of a silent overwrite.
+    // Exact C/B pair matches are strongest. B Number is the trusted single-sided
+    // anchor; C-only evidence must not overwrite trusted B/location values.
     const reportConfig = this.reportConfig_();
     const summaryColumns = reportConfig.summaryColumns;
 
@@ -96,11 +95,37 @@ const PalletAndProductByMembersEodReportService = {
     const cMatches = cNumber ? lookup.byCNumber[cNumber] || [] : [];
     const bMatches = bNumber ? lookup.byBNumber[bNumber] || [] : [];
     const uniqueCMatch = this.getUniquePalletMatch_(cMatches);
-    const uniqueBMatch = this.getUniquePalletMatch_(bMatches);
+    const uniqueBMatch = this.getUniquePalletMatchForBNumber_(bMatches);
 
     if (uniqueBMatch && uniqueBMatch.cNumber && uniqueBMatch.cNumber !== cNumber) {
-      context.setValue(summaryColumns.cNumber, rowIndex, uniqueBMatch.cNumber);
-      context.setValue(summaryColumns.location, rowIndex, uniqueBMatch.location);
+      const bCorrectionGate = this.getBNumberCorrectionGate_(bMatches, owner);
+
+      if (bCorrectionGate.allowed) {
+        context.setValue(summaryColumns.cNumber, rowIndex, uniqueBMatch.cNumber);
+        context.setValue(summaryColumns.location, rowIndex, uniqueBMatch.location);
+        this.applyMemberAndProductInfo_(
+          context,
+          validationRows,
+          rowIndex,
+          lookup,
+          bNumber,
+          owner,
+          result
+        );
+
+        EodReportValidationService.corrected(
+          validationRows,
+          rowIndex,
+          [
+            `${reportConfig.displayName}: corrected C Number.`,
+            `Before: ${EodReportNormalisationService.displayValue(beforeCNumber)}`,
+            `After: ${EodReportNormalisationService.displayValue(uniqueBMatch.cNumber)}`
+          ].join('\n')
+        );
+        result.corrected++;
+        return;
+      }
+
       this.applyMemberAndProductInfo_(
         context,
         validationRows,
@@ -111,59 +136,107 @@ const PalletAndProductByMembersEodReportService = {
         result
       );
 
-      EodReportValidationService.corrected(
-        validationRows,
-        rowIndex,
-        [
-          `${reportConfig.displayName}: corrected C Number.`,
-          `Before: ${EodReportNormalisationService.displayValue(beforeCNumber)}`,
-          `After: ${EodReportNormalisationService.displayValue(uniqueBMatch.cNumber)}`
-        ].join('\n')
+      const note = this.buildBlockedBNumberCorrectionNote_(
+        bNumber,
+        owner,
+        bCorrectionGate.reason,
+        bCorrectionGate.matchOwner
       );
-      result.corrected++;
+
+      if (cNumber && bNumber) {
+        EodReportValidationService.mismatch(
+          validationRows,
+          rowIndex,
+          [
+            note,
+            this.buildMismatchNote_(lookup.filename, dateKey, cNumber, bNumber, cMatches, bMatches)
+          ].join('\n\n')
+        );
+        result.mismatched++;
+        return;
+      }
+
+      EodReportValidationService.noMatch(validationRows, rowIndex, note);
+      result.notFound++;
       return;
     }
 
-    if (uniqueCMatch && uniqueCMatch.bNumber && uniqueCMatch.bNumber !== bNumber) {
-      context.setValue(summaryColumns.bNumber, rowIndex, uniqueCMatch.bNumber);
-      context.setValue(summaryColumns.location, rowIndex, uniqueCMatch.location);
+    if (bNumber && bMatches.length > 0 && !uniqueBMatch) {
       this.applyMemberAndProductInfo_(
         context,
         validationRows,
         rowIndex,
         lookup,
-        uniqueCMatch.bNumber,
+        bNumber,
         owner,
         result
       );
 
-      EodReportValidationService.corrected(
-        validationRows,
-        rowIndex,
-        [
-          `${reportConfig.displayName}: corrected B Number.`,
-          `Before: ${EodReportNormalisationService.displayValue(beforeBNumber)}`,
-          `After: ${EodReportNormalisationService.displayValue(uniqueCMatch.bNumber)}`
-        ].join('\n')
+      const note = this.buildBlockedBNumberCorrectionNote_(
+        bNumber,
+        owner,
+        'ambiguousOwner'
       );
-      result.corrected++;
+
+      if (cNumber && bNumber) {
+        EodReportValidationService.mismatch(
+          validationRows,
+          rowIndex,
+          [
+            note,
+            this.buildMismatchNote_(lookup.filename, dateKey, cNumber, bNumber, cMatches, bMatches)
+          ].join('\n\n')
+        );
+        result.mismatched++;
+        return;
+      }
+
+      EodReportValidationService.noMatch(validationRows, rowIndex, note);
+      result.notFound++;
       return;
     }
 
-    if (cMatches.length > 0 || bMatches.length > 0) {
-      const bestMatch = uniqueBMatch || uniqueCMatch;
-      const finalBNumber = bestMatch && bestMatch.bNumber ? bestMatch.bNumber : bNumber;
-
-      if (bestMatch && bestMatch.location) {
-        context.setValue(summaryColumns.location, rowIndex, bestMatch.location);
-      }
-
+    if (uniqueCMatch && uniqueCMatch.bNumber && uniqueCMatch.bNumber !== bNumber) {
       this.applyMemberAndProductInfo_(
         context,
         validationRows,
         rowIndex,
         lookup,
-        finalBNumber,
+        bNumber,
+        owner,
+        result
+      );
+
+      const note = [
+        `${reportConfig.displayName}: B Number not corrected: C Number cannot override trusted B Number.`,
+        'C-only evidence cannot set Location.'
+      ].join('\n');
+
+      if (cNumber && bNumber) {
+        EodReportValidationService.mismatch(
+          validationRows,
+          rowIndex,
+          [
+            note,
+            this.buildMismatchNote_(lookup.filename, dateKey, cNumber, bNumber, cMatches, bMatches)
+          ].join('\n\n')
+        );
+        result.mismatched++;
+        return;
+      }
+
+      EodReportValidationService.noMatch(validationRows, rowIndex, note);
+      result.notFound++;
+      return;
+    }
+
+    if (cMatches.length > 0 || bMatches.length > 0) {
+      this.applyMemberAndProductInfo_(
+        context,
+        validationRows,
+        rowIndex,
+        lookup,
+        bNumber,
         owner,
         result
       );
@@ -456,6 +529,62 @@ const PalletAndProductByMembersEodReportService = {
     return records.length === 1 ? records[0] : null;
   },
 
+  getBNumberCorrectionGate_(matches, owner) {
+    if (!owner) {
+      return {
+        allowed: false,
+        reason: 'missingOwner'
+      };
+    }
+
+    const uniqueMatch = this.getUniquePalletMatchForBNumber_(matches);
+
+    if (!uniqueMatch) {
+      return {
+        allowed: false,
+        reason: 'ambiguousOwner'
+      };
+    }
+
+    if (uniqueMatch.owner !== owner) {
+      return {
+        allowed: false,
+        reason: 'ownerMismatch',
+        matchOwner: uniqueMatch.owner
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: ''
+    };
+  },
+
+  buildBlockedBNumberCorrectionNote_(bNumber, owner, reason, matchOwner) {
+    const normalizedBNumber = EodReportNormalisationService.normalizeBNumber(bNumber);
+    const displayOwner = owner || '(blank)';
+    const displayMatchOwner = matchOwner || '(blank)';
+
+    if (reason === 'missingOwner') {
+      return [
+        `${this.reportConfig_().displayName}: C/Location correction blocked for B ${normalizedBNumber}.`,
+        'Summary Owner is missing, so B Number owner could not confirm the correction.'
+      ].join('\n');
+    }
+
+    if (reason === 'ownerMismatch') {
+      return [
+        `${this.reportConfig_().displayName}: C/Location correction blocked for B ${normalizedBNumber}.`,
+        `Summary Owner ${displayOwner} does not match B Number owner ${displayMatchOwner}.`
+      ].join('\n');
+    }
+
+    return [
+      `${this.reportConfig_().displayName}: C/Location correction blocked for B ${normalizedBNumber}.`,
+      'B Number ownership is ambiguous, so B Number owner could not confirm the correction.'
+    ].join('\n');
+  },
+
   buildMismatchNote_(filename, dateKey, summaryCNumber, summaryBNumber, cMatches, bMatches) {
     const lines = [
       `${this.reportConfig_().displayName}: mismatch in ${filename}.`,
@@ -491,6 +620,33 @@ const PalletAndProductByMembersEodReportService = {
         match.cNumber || '',
         match.bNumber || '',
         match.location || ''
+      ].join('::');
+
+      if (unique[key]) {
+        return;
+      }
+
+      unique[key] = true;
+      records.push(match);
+    });
+
+    return records.length === 1 ? records[0] : null;
+  },
+
+  getUniquePalletMatchForBNumber_(matches) {
+    if (!matches || matches.length === 0) {
+      return null;
+    }
+
+    const unique = {};
+    const records = [];
+
+    matches.forEach(match => {
+      const key = [
+        match.cNumber || '',
+        match.bNumber || '',
+        match.location || '',
+        match.owner || ''
       ].join('::');
 
       if (unique[key]) {

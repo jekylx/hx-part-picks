@@ -35,6 +35,17 @@ function runLocalTests() {
   runTest_('Outstanding Orders customer correction requires B owner confirmation', testOutstandingOrdersCustomerOwnerGate_, results);
   runTest_('Outstanding Orders blocks customer correction without B owner confirmation', testOutstandingOrdersCustomerOwnerGateBlocks_, results);
   runTest_('Outstanding Orders guards carrier and state corrections', testOutstandingOrdersCarrierStateGuards_, results);
+  runTest_('Pallet/Product exact C+B match sets Location', testPalletProductExactMatchSetsLocation_, results);
+  runTest_('Pallet/Product exact C+B match fills Member', testPalletProductExactMatchFillsMember_, results);
+  runTest_('Pallet/Product B owner match corrects C and Location', testPalletProductBMatchOwnerGateCorrects_, results);
+  runTest_('Pallet/Product B owner mismatch blocks C and Location correction', testPalletProductBMatchOwnerMismatchBlocks_, results);
+  runTest_('Pallet/Product missing owner blocks B correction', testPalletProductBMatchMissingOwnerBlocks_, results);
+  runTest_('Pallet/Product ambiguous B ownership blocks correction', testPalletProductBMatchAmbiguousOwnerBlocks_, results);
+  runTest_('Pallet/Product C cannot correct trusted B Number', testPalletProductCMatchDoesNotCorrectB_, results);
+  runTest_('Pallet/Product C-only evidence does not set Location', testPalletProductCOnlyEvidenceDoesNotSetLocation_, results);
+  runTest_('Pallet/Product mismatch does not overwrite Location', testPalletProductMismatchDoesNotOverwriteLocation_, results);
+  runTest_('Pallet/Product note requires unique product tuple', testPalletProductNoteRequiresUniqueProduct_, results);
+  runTest_('Pallet/Product Member requires unique B and Owner match', testPalletProductMemberRequiresUniqueBAndOwner_, results);
   runTest_('Prompt contains raw extraction rules', testPromptRules_, results);
   runTest_('Sheet setup creates expected sheets', testSheetSetup_, results);
   runTest_('Raw row append keeps raw values', testAppendMockRawRow_, results);
@@ -458,6 +469,384 @@ function testOutstandingOrdersCarrierStateGuards_() {
   assertContains_(notes, 'State not corrected', 'Invalid report State should add a validation note.');
 }
 
+function testPalletProductExactMatchSetsLocation_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': 'C7654321',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_('A-01-02', outcome.context.values['Location'], 'Exact C+B match should set Location.');
+}
+
+function testPalletProductExactMatchFillsMember_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': '',
+      'C Number': 'C7654321',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_('M001', outcome.context.values['Member'], 'Exact C+B match should fill Member through B+Owner.');
+}
+
+function testPalletProductBMatchOwnerGateCorrects_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': '',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_('C7654321', outcome.context.values['C Number'], 'B owner match should correct C Number.');
+  assertEquals_('A-01-02', outcome.context.values['Location'], 'B owner match should set Location.');
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'corrected C Number',
+    'B owner match should add a correction note.'
+  );
+}
+
+function testPalletProductBMatchOwnerMismatchBlocks_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': '',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'VWXYZ',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_('', outcome.context.values['C Number'], 'Owner mismatch should not correct C Number.');
+  assertEquals_('OLD-LOC', outcome.context.values['Location'], 'Owner mismatch should not set Location.');
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'does not match B Number owner',
+    'Owner mismatch should add a blocked-correction note.'
+  );
+}
+
+function testPalletProductBMatchMissingOwnerBlocks_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': '',
+      'Location': 'OLD-LOC',
+      'C Number': '',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_('', outcome.context.values['C Number'], 'Missing owner should not correct C Number.');
+  assertEquals_('OLD-LOC', outcome.context.values['Location'], 'Missing owner should not set Location.');
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'Summary Owner is missing',
+    'Missing owner should add a blocked-correction note.'
+  );
+}
+
+function testPalletProductBMatchAmbiguousOwnerBlocks_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': '',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      }),
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'VWXYZ',
+        memberNo: 'M002'
+      })
+    ]
+  });
+
+  assertEquals_('', outcome.context.values['C Number'], 'Ambiguous B ownership should not correct C Number.');
+  assertEquals_('OLD-LOC', outcome.context.values['Location'], 'Ambiguous B ownership should not set Location.');
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'B Number ownership is ambiguous',
+    'Ambiguous B ownership should add a blocked-correction note.'
+  );
+}
+
+function testPalletProductCMatchDoesNotCorrectB_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': 'C7654321',
+      'B Number': 'B9999999'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_('B9999999', outcome.context.values['B Number'], 'C Number must not correct trusted B Number.');
+  assertEquals_('OLD-LOC', outcome.context.values['Location'], 'C-only evidence must not set Location.');
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'B Number not corrected: C Number cannot override trusted B Number.',
+    'C mismatch should explain that C cannot override B.'
+  );
+}
+
+function testPalletProductCOnlyEvidenceDoesNotSetLocation_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': 'C7654321',
+      'B Number': ''
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_('', outcome.context.values['B Number'], 'C-only evidence must not fill B Number.');
+  assertEquals_('OLD-LOC', outcome.context.values['Location'], 'C-only evidence must not set Location.');
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'C-only evidence cannot set Location.',
+    'C-only evidence should explain that Location is not trusted.'
+  );
+}
+
+function testPalletProductMismatchDoesNotOverwriteLocation_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': 'C7654321',
+      'B Number': 'B9999999'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1111111',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      }),
+      buildPalletProductRecord_({
+        location: 'B-03-04',
+        cNumber: 'C7654321',
+        bNumber: 'B2222222',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_('OLD-LOC', outcome.context.values['Location'], 'Mismatch branch should not overwrite Location.');
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'mismatch',
+    'Mismatch branch should keep mismatch validation note.'
+  );
+}
+
+function testPalletProductNoteRequiresUniqueProduct_() {
+  let outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': '',
+      'C Number': 'C7654321',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        productCode: 'P001',
+        productDescription: 'Product One',
+        vintage: '2020',
+        bottleSize: '750ML'
+      }),
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        productCode: 'P001',
+        productDescription: 'Product One',
+        vintage: '2020',
+        bottleSize: '750ML'
+      })
+    ]
+  });
+
+  assertContains_(
+    outcome.context.notes['B Number'],
+    'Product Code: P001',
+    'Unique product tuple should set B Number note.'
+  );
+
+  outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': '',
+      'C Number': 'C7654321',
+      'B Number': 'B1234567'
+    },
+    notes: {
+      'B Number': 'OLD NOTE'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        productCode: 'P001',
+        productDescription: 'Product One'
+      }),
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        productCode: 'P002',
+        productDescription: 'Product Two'
+      })
+    ]
+  });
+
+  assertEquals_('OLD NOTE', outcome.context.notes['B Number'], 'Ambiguous product tuple should not replace B Number note.');
+}
+
+function testPalletProductMemberRequiresUniqueBAndOwner_() {
+  let outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': '',
+      'C Number': 'C7654321',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_('M001', outcome.context.values['Member'], 'Unique B+Owner Member should fill Member.');
+
+  outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': '',
+      'C Number': 'C7654321',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      }),
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M002'
+      })
+    ]
+  });
+
+  assertEquals_('', outcome.context.values['Member'], 'Ambiguous B+Owner Member should not fill Member.');
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'no Member No match',
+    'Ambiguous B+Owner Member should add validation note.'
+  );
+}
+
 function testPromptRules_() {
   const prompt = PromptService.buildExtractionPrompt();
 
@@ -776,6 +1165,112 @@ function testPdfProcessorHealth_() {
 /**
  * Mock builders
  */
+
+function runPalletProductRowTest_(options) {
+  const context = buildMockPalletProductContext_(options.values || {}, options.notes || {});
+  const validationRows = EodReportValidationService.create(1);
+  const result = PalletAndProductByMembersEodReportService.createResult_();
+  const lookup = buildMockPalletProductLookup_(options.records || []);
+
+  PalletAndProductByMembersEodReportService.applyRow_(
+    context,
+    validationRows,
+    0,
+    lookup,
+    '2026-05-01',
+    result
+  );
+
+  return {
+    context,
+    validationRows,
+    result
+  };
+}
+
+function buildMockPalletProductContext_(values, notes) {
+  const baseValues = {
+    'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
+    'Owner': '',
+    'Member': '',
+    'Location': '',
+    'C Number': '',
+    'B Number': ''
+  };
+
+  Object.keys(values).forEach(key => {
+    baseValues[key] = values[key];
+  });
+
+  return {
+    rowCount: 1,
+    values: baseValues,
+    notes,
+
+    value(headerName) {
+      return this.values[headerName] || '';
+    },
+
+    setValue(headerName, rowIndex, value) {
+      this.values[headerName] = value;
+    },
+
+    setNote(headerName, rowIndex, value) {
+      this.notes[headerName] = value;
+    }
+  };
+}
+
+function buildMockPalletProductLookup_(records) {
+  const lookup = {
+    filename: 'RP_Pallet_and_Product_by_Member.csv',
+    dateKey: '2026-05-01',
+    byPair: {},
+    byCNumber: {},
+    byBNumber: {},
+    byBNumberAndOwner: {}
+  };
+
+  records.forEach((record, index) => {
+    const normalized = buildPalletProductRecord_(record);
+
+    normalized.reportRow = index + 4;
+
+    if (normalized.cNumber && normalized.bNumber) {
+      lookup.byPair[
+        EodReportNormalisationService.pairKey(normalized.cNumber, normalized.bNumber)
+      ] = normalized;
+    }
+
+    EodReportNormalisationService.addLookupRecord(lookup.byCNumber, normalized.cNumber, normalized);
+    EodReportNormalisationService.addLookupRecord(lookup.byBNumber, normalized.bNumber, normalized);
+
+    if (normalized.bNumber && normalized.owner) {
+      EodReportNormalisationService.addLookupRecord(
+        lookup.byBNumberAndOwner,
+        EodReportNormalisationService.bOwnerKey(normalized.bNumber, normalized.owner),
+        normalized
+      );
+    }
+  });
+
+  return lookup;
+}
+
+function buildPalletProductRecord_(record) {
+  return {
+    reportRow: record.reportRow || 4,
+    location: String(record.location || '').trim(),
+    cNumber: EodReportNormalisationService.normalizeCNumber(record.cNumber),
+    bNumber: EodReportNormalisationService.normalizeBNumber(record.bNumber),
+    owner: EodReportNormalisationService.normalizeOwner(record.owner),
+    memberNo: EodReportNormalisationService.normalizeMember(record.memberNo),
+    productCode: String(record.productCode || '').trim(),
+    productDescription: String(record.productDescription || '').trim(),
+    vintage: String(record.vintage || '').trim(),
+    bottleSize: String(record.bottleSize || '').trim()
+  };
+}
 
 function buildMockAppendContext_(processingKey) {
   const mockMessage = {
