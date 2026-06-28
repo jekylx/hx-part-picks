@@ -27,6 +27,110 @@ function setup() {
   Logger.log('Setup complete. Add a time trigger for processPrinterEmails.');
 }
 
+function handleSummaryRefreshEdit(e) {
+  if (!isSummaryRefreshEdit_(e)) {
+    return;
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  refreshSummaryRowFromEdit_(e, lock);
+}
+
+function refreshSummaryRowFromEdit_(e, lock) {
+  try {
+    const range = e.range;
+    EodReportCoordinator.refreshSummaryRow(range.getSheet(), range.getRow());
+  } finally {
+    try {
+      e.range.setValue(false);
+    } finally {
+      lock.releaseLock();
+    }
+  }
+}
+
+function installSummaryRefreshTrigger() {
+  const handlerName = 'handleSummaryRefreshEdit';
+  const triggers = ScriptApp.getProjectTriggers();
+
+  if (hasProjectTriggerForHandler_(triggers, handlerName)) {
+    Logger.log(`${handlerName} trigger already installed.`);
+    return;
+  }
+
+  ScriptApp
+    .newTrigger(handlerName)
+    .forSpreadsheet(SpreadsheetApp.getActive())
+    .onEdit()
+    .create();
+
+  Logger.log(`${handlerName} trigger installed.`);
+}
+
+function isSummaryRefreshEdit_(e) {
+  if (!e || !e.range) {
+    return false;
+  }
+
+  const range = e.range;
+
+  if (
+    range.getNumRows() !== 1 ||
+    range.getNumColumns() !== 1
+  ) {
+    return false;
+  }
+
+  const sheet = range.getSheet();
+
+  if (!sheet || sheet.getName() !== CONFIG.summary.sheetName) {
+    return false;
+  }
+
+  if (range.getRow() <= Number(CONFIG.summary.headerRow || 2)) {
+    return false;
+  }
+
+  const refreshColumn = getSummaryColumnIndexByHeader_(
+    sheet,
+    'Refresh EOD'
+  );
+
+  if (refreshColumn <= 0 || range.getColumn() !== refreshColumn) {
+    return false;
+  }
+
+  return isCheckedEditValue_(e.value);
+}
+
+function isCheckedEditValue_(value) {
+  return value === true || String(value || '').toUpperCase() === 'TRUE';
+}
+
+function getSummaryColumnIndexByHeader_(sheet, headerName) {
+  const headerRow = Number(CONFIG.summary.headerRow || 2);
+
+  if (!sheet || sheet.getLastColumn() < 1) {
+    return 0;
+  }
+
+  const headers = sheet
+    .getRange(headerRow, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
+
+  return headers.indexOf(headerName) + 1;
+}
+
+function hasProjectTriggerForHandler_(triggers, handlerName) {
+  return (triggers || []).some(trigger =>
+    trigger &&
+    typeof trigger.getHandlerFunction === 'function' &&
+    trigger.getHandlerFunction() === handlerName
+  );
+}
+
 function processPrinterEmails() {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);

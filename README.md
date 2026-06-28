@@ -59,6 +59,7 @@ Do not commit these values.
    ```
 8. Run `setup()` manually once from Apps Script. `setup()` creates labels, sheets, folders, summary rows, and hides implementation sheets.
 9. Create a time-driven trigger for `processPrinterEmails()`.
+10. Run `installSummaryRefreshTrigger()` once to create the installable edit trigger for `handleSummaryRefreshEdit(e)`.
 
 ## Local And Dev Workflow
 
@@ -100,6 +101,7 @@ This repo has no `package.json` and no local test runner. Apps Script tests run 
 - Missing EOD reports: EOD reports are searched separately by sender, subject, attachment filename, and date. Missing reports produce validation notes and log entries.
 - EOD header mismatch: required headers are matched after trimming, lowercasing, BOM stripping, and whitespace collapse. Missing required columns throw an EOD lookup error.
 - Validation colours: green means OK or corrected, yellow means no match/blocked, red means mismatch.
+- Manual EOD refresh: correct values directly on a `Part Pick Summary` row, then check that row's `Refresh EOD` checkbox. The installable edit trigger reruns EOD checks for that row only and resets the checkbox.
 - Apps Script timeout: reduce `CONFIG.gmail.maxThreadsPerRun`, rerun later, and rely on batch/page dedupe for partial retries.
 
 ## Safety Rules
@@ -108,6 +110,7 @@ This repo has no `package.json` and no local test runner. Apps Script tests run 
 - `processPrinterEmails()` must not run `setup()`.
 - `Part Picks` stores raw Gemini output and must not be normalized.
 - Summary append is append-only and must not overwrite existing rows.
+- `Refresh EOD` only reruns EOD checks on an existing summary row. It must not reprocess Gmail, PDFs, Gemini extraction, Drive archive, labels, dedupe keys, or raw `Part Picks` rows.
 - Gmail thread labels are visibility only; processed-key dedupe controls reprocessing.
 - Do not remove the Inbox-only Gmail query behavior without understanding printer thread behavior.
 - Do not use order-only Outstanding Orders matching.

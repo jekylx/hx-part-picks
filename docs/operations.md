@@ -17,12 +17,19 @@
    - `Configuration`
 7. Confirm Drive folder `Part Pick Automation/Processed PDFs` exists.
 8. Create one time-driven trigger for `processPrinterEmails()`.
+9. Run `installSummaryRefreshTrigger()` once to create the installable edit trigger for `handleSummaryRefreshEdit(e)`.
 
 ## Daily Behavior
 
 The trigger runs `processPrinterEmails()`. The script locks, searches Inbox printer threads, processes new PDF pages, archives PDFs, appends raw and summary rows, applies EOD enrichment, writes processed keys, labels successful threads, marks them read, and archives them.
 
 The printer can append later scans as replies to an existing daily thread. The Gmail search intentionally includes Inbox threads even if they already have processed/failed labels. Dedupe keys decide whether a PDF/page is new.
+
+## Manual EOD Refresh
+
+If a parsed summary value is wrong, edit the value directly on the existing `Part Pick Summary` row, then check that row's `Refresh EOD` checkbox. The installable edit trigger reruns EOD enrichment and validation for that row only, using the current row values as the source of truth, and resets the checkbox when finished.
+
+This does not append a summary row, touch raw `Part Picks` rows, process printer emails, process PDFs, call Gemini, archive files, change Gmail labels, or change processed keys.
 
 ## Labels
 
@@ -77,4 +84,5 @@ In Apps Script:
 5. Get explicit approval for `clasp push`.
 6. Run `clasp push`.
 7. Run `runLocalTests()` in Apps Script.
-8. Smoke test with controlled input before relying on the trigger.
+8. If trigger code changed, run `installSummaryRefreshTrigger()` and confirm it did not create duplicates.
+9. Smoke test with controlled input before relying on the trigger.

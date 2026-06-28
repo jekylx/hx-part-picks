@@ -24,6 +24,7 @@ clasp push
 - Do not change Gmail query, label, archive, or dedupe logic casually.
 - Do not normalize raw extraction output written to `Part Picks`.
 - Do not overwrite existing summary rows.
+- Do not use `Refresh EOD` as a reprocessing path for Gmail, PDFs, Gemini, archive, labels, dedupe keys, or raw `Part Picks`.
 - Do not change Pallet/Product C/B/location correction policy without explicit approval.
 - Do not trust Outstanding Orders by Order No. alone.
 - Never commit secrets, API keys, clasp auth files, private email contents, or sensitive IDs.
@@ -33,6 +34,7 @@ clasp push
 - Run `node --check` on changed JS files.
 - Run `git diff --check`.
 - After an approved `clasp push`, run `runLocalTests()` in Apps Script.
+- After deploying `Refresh EOD` changes, run `installSummaryRefreshTrigger()` once if the installable edit trigger is not already present.
 - For documentation-only changes, `node --check *.js` can be run as a repo sanity check.
 
 ## Business Logic Summary
@@ -60,6 +62,7 @@ Summary append rules:
 - `Part Pick Summary` is append-only by processing key.
 - Manual and formula columns are not script-owned.
 - EOD enrichment applies after new rows are appended.
+- `Refresh EOD` is a manual checkbox on existing summary rows. It reruns EOD checks for that row only and must not append rows or call ingestion services.
 
 EOD report enrichment rules:
 

@@ -11,6 +11,7 @@ The test harness:
 - Validates raw extraction prompt rules.
 - Validates raw row append behavior.
 - Validates append-only summary behavior.
+- Validates the `Refresh EOD` checkbox config, edit filtering, trigger duplicate helper, and one-row coordinator refresh routing.
 - Validates batch/page processing key stability.
 - Validates EOD normalization helpers.
 - Validates Outstanding Orders Order+B matching and blocked cases.
@@ -75,5 +76,6 @@ git -c safe.directory=C:/path/to/hx-part-picks diff --check
 - Confirm `_Processed Keys` has the page key and, after all pages, the batch key.
 - Confirm `Part Pick Summary` appended one row and did not overwrite existing manual rows.
 - Confirm EOD validation notes/colours are reasonable.
+- Correct a summary row in a controlled test, check `Refresh EOD`, and confirm only that row's EOD validation refreshes and the checkbox resets.
 - Confirm Gmail thread labeling, read state, and archive behavior.
 - Confirm `Processing Log` has no unexpected critical errors.

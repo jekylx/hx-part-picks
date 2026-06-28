@@ -214,6 +214,7 @@ const SummaryService = {
 
     this.applySummaryNumberFormats_(sheet, headers);
     this.applyDateCompletedValidation_(sheet, headers);
+    this.applyCheckboxValidations_(sheet, headers);
     this.applySlaConditionalFormatting_(sheet, headers);
   },
 
@@ -266,6 +267,34 @@ const SummaryService = {
     sheet
       .getRange(startRow, completedCol, rowCount, 1)
       .setDataValidation(rule);
+  },
+
+  applyCheckboxValidations_(sheet, headers) {
+    const startRow = this.summaryDataStartRow_();
+    const rowCount = sheet.getMaxRows() - startRow + 1;
+
+    if (rowCount <= 0) {
+      return;
+    }
+
+    const rule = SpreadsheetApp
+      .newDataValidation()
+      .requireCheckbox()
+      .build();
+
+    CONFIG.summary.columns
+      .filter(column => column.type === 'checkbox')
+      .forEach(column => {
+        const col = headers.indexOf(column.header) + 1;
+
+        if (col <= 0) {
+          return;
+        }
+
+        sheet
+          .getRange(startRow, col, rowCount, 1)
+          .setDataValidation(rule);
+      });
   },
 
   applySlaConditionalFormatting_(sheet, headers) {

@@ -148,6 +148,7 @@ const CONFIG = {
       { header: 'B Number', source: 'B Number', type: 'text' },
       { header: 'Date Completed', manual: true, type: 'date' },
       { header: 'SLA', type: 'sla' },
+      { header: 'Refresh EOD', manual: true, type: 'checkbox' },
     ],
   },
 

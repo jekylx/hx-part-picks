@@ -2,6 +2,8 @@
 
 EOD enrichment runs after new summary rows are appended. It searches Gmail for CSV reports matching the summary row's `Scanned At` date and writes corrections, notes, and validation colour to the summary row.
 
+Existing summary rows can also be refreshed manually. Edit the row values first, then check the row's `Refresh EOD` checkbox. The installable `handleSummaryRefreshEdit(e)` trigger reruns EOD checks for that single row only and resets the checkbox.
+
 ## Report Discovery
 
 All EOD reports use:
@@ -85,6 +87,7 @@ Summary columns used:
 - Customer, carrier, state, and owner enrichment requires the Pallet/Product service to confirm that the summary B Number has a unique owner matching the order owner.
 - Carrier and state corrections are guarded: valid existing summary values are not overwritten.
 - Summary quantity fields are not currently changed by Outstanding Orders data.
+- Manual refresh uses the same matching rules. It still matches by normalized `Order No.` plus the `O`-segment B Number from `Search Criteria`; order-only fallback remains forbidden.
 
 ## Validation Semantics
 

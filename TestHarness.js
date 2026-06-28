@@ -28,6 +28,7 @@ function runLocalTests() {
   cleanupTestRows();
 
   runTest_('Config has required blocks', testConfigHasRequiredBlocks_, results);
+  runTest_('Summary config has Refresh EOD checkbox at end', testSummaryRefreshConfig_, results);
   runTest_('Gmail query is correct', testGmailQuery_, results);
   runTest_('Order number normalisation accepts variable length', testOrderNumberNormalisation_, results);
   runTest_('Outstanding Orders order parsing accepts variable length', testOutstandingOrdersOrderParsing_, results);
@@ -66,6 +67,14 @@ function runLocalTests() {
   runTest_('Pallet/Product Member requires unique B and Owner match', testPalletProductMemberRequiresUniqueBAndOwner_, results);
   runTest_('Prompt contains raw extraction rules', testPromptRules_, results);
   runTest_('Sheet setup creates expected sheets', testSheetSetup_, results);
+  runTest_('Summary setup applies Refresh EOD checkbox validation', testSummaryCheckboxValidation_, results);
+  runTest_('Summary refresh edit handler filters edits strictly', testSummaryRefreshEditFilter_, results);
+  runTest_('Summary refresh edit handler refreshes checked rows', testSummaryRefreshEditHandlerCallsRefresh_, results);
+  runTest_('Summary refresh edit handler resets checkbox after failure', testSummaryRefreshEditHandlerResetsAfterFailure_, results);
+  runTest_('Summary refresh trigger duplicate check works', testSummaryRefreshTriggerDuplicateCheck_, results);
+  runTest_('Coordinator refresh processes exactly one summary row', testCoordinatorRefreshProcessesOneRow_, results);
+  runTest_('Coordinator refresh does not append summary rows', testCoordinatorRefreshDoesNotAppend_, results);
+  runTest_('Coordinator refresh uses current summary row values', testCoordinatorRefreshUsesCurrentRowValues_, results);
   runTest_('Raw row append keeps raw values', testAppendMockRawRow_, results);
   runTest_('Summary appends missing rows only', testSummaryAppendOnly_, results);
   runTest_('Batch and page processing keys are stable and unique', testPageProcessingKey_, results);
@@ -163,6 +172,15 @@ function testConfigHasRequiredBlocks_() {
     const field = CONFIG.fields.find(f => f.key === key);
     assertTruthy_(field, `Missing field config: ${key}`);
   });
+}
+
+function testSummaryRefreshConfig_() {
+  const columns = CONFIG.summary.columns;
+  const refreshColumn = columns[columns.length - 1];
+
+  assertEquals_('Refresh EOD', refreshColumn.header, 'Refresh EOD must be the final summary column.');
+  assertEquals_(true, refreshColumn.manual, 'Refresh EOD must be manual.');
+  assertEquals_('checkbox', refreshColumn.type, 'Refresh EOD must be a checkbox column.');
 }
 
 function testGmailQuery_() {
@@ -1581,6 +1599,259 @@ function testSheetSetup_() {
   });
 }
 
+function testSummaryCheckboxValidation_() {
+  setup();
+
+  const sheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const headers = sheet
+    .getRange(CONFIG.summary.headerRow, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
+  const refreshCol = getColumnIndex_(headers, 'Refresh EOD');
+
+  assertTruthy_(refreshCol > 0, 'Refresh EOD column missing.');
+
+  const rule = sheet
+    .getRange(CONFIG.summary.headerRow + 1, refreshCol)
+    .getDataValidation();
+
+  assertTruthy_(rule, 'Refresh EOD data validation missing.');
+  assertEquals_(
+    SpreadsheetApp.DataValidationCriteria.CHECKBOX,
+    rule.getCriteriaType(),
+    'Refresh EOD should use checkbox validation.'
+  );
+}
+
+function testSummaryRefreshEditFilter_() {
+  const refreshCol = CONFIG.summary.columns.length + 1;
+
+  assertEquals_(
+    false,
+    isSummaryRefreshEdit_(null),
+    'Missing edit event should be ignored.'
+  );
+
+  assertEquals_(
+    false,
+    isSummaryRefreshEdit_(buildMockSummaryRefreshEditEvent_({
+      sheetName: 'Wrong Sheet',
+      row: CONFIG.summary.headerRow + 1,
+      col: refreshCol,
+      value: 'TRUE'
+    })),
+    'Wrong sheet should be ignored.'
+  );
+
+  assertEquals_(
+    false,
+    isSummaryRefreshEdit_(buildMockSummaryRefreshEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: refreshCol - 1,
+      value: 'TRUE'
+    })),
+    'Wrong column should be ignored.'
+  );
+
+  assertEquals_(
+    false,
+    isSummaryRefreshEdit_(buildMockSummaryRefreshEditEvent_({
+      row: CONFIG.summary.headerRow,
+      col: refreshCol,
+      value: 'TRUE'
+    })),
+    'Header row should be ignored.'
+  );
+
+  assertEquals_(
+    false,
+    isSummaryRefreshEdit_(buildMockSummaryRefreshEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: refreshCol,
+      value: 'FALSE'
+    })),
+    'Unchecked edit should be ignored.'
+  );
+
+  assertEquals_(
+    false,
+    isSummaryRefreshEdit_(buildMockSummaryRefreshEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: refreshCol,
+      value: 'TRUE',
+      numRows: 2
+    })),
+    'Multi-row edit should be ignored.'
+  );
+
+  assertEquals_(
+    true,
+    isSummaryRefreshEdit_(buildMockSummaryRefreshEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: refreshCol,
+      value: 'TRUE'
+    })),
+    'Checked Refresh EOD data-row edit should be accepted.'
+  );
+}
+
+function testSummaryRefreshEditHandlerCallsRefresh_() {
+  const event = buildMockSummaryRefreshEditEvent_({
+    row: CONFIG.summary.headerRow + 3,
+    col: CONFIG.summary.columns.length + 1,
+    value: 'TRUE'
+  });
+  const lock = buildMockLock_();
+  const originalRefresh = EodReportCoordinator.refreshSummaryRow;
+  let called = false;
+
+  EodReportCoordinator.refreshSummaryRow = (sheet, rowNumber) => {
+    called = true;
+    assertEquals_(CONFIG.summary.sheetName, sheet.getName(), 'Handler should pass summary sheet.');
+    assertEquals_(CONFIG.summary.headerRow + 3, rowNumber, 'Handler should pass edited row.');
+  };
+
+  try {
+    refreshSummaryRowFromEdit_(event, lock);
+  } finally {
+    EodReportCoordinator.refreshSummaryRow = originalRefresh;
+  }
+
+  assertEquals_(true, called, 'Checked refresh edit should call row refresh.');
+  assertEquals_(false, event.range.valueSet, 'Handler should reset checkbox after success.');
+  assertEquals_(true, lock.released, 'Handler should release lock after success.');
+}
+
+function testSummaryRefreshEditHandlerResetsAfterFailure_() {
+  const event = buildMockSummaryRefreshEditEvent_({
+    row: CONFIG.summary.headerRow + 3,
+    col: CONFIG.summary.columns.length + 1,
+    value: 'TRUE'
+  });
+  const lock = buildMockLock_();
+  const originalRefresh = EodReportCoordinator.refreshSummaryRow;
+
+  EodReportCoordinator.refreshSummaryRow = () => {
+    throw new Error('forced refresh failure');
+  };
+
+  try {
+    refreshSummaryRowFromEdit_(event, lock);
+    throw new Error('Expected refresh failure.');
+  } catch (err) {
+    assertContains_(String(err), 'forced refresh failure', 'Unexpected failure from refresh helper.');
+  } finally {
+    EodReportCoordinator.refreshSummaryRow = originalRefresh;
+  }
+
+  assertEquals_(false, event.range.valueSet, 'Handler should reset checkbox after failure.');
+  assertEquals_(true, lock.released, 'Handler should release lock after failure.');
+}
+
+function testSummaryRefreshTriggerDuplicateCheck_() {
+  const handlerName = 'handleSummaryRefreshEdit';
+  const triggers = [
+    { getHandlerFunction: () => 'processPrinterEmails' },
+    { getHandlerFunction: () => handlerName }
+  ];
+
+  assertEquals_(
+    true,
+    hasProjectTriggerForHandler_(triggers, handlerName),
+    'Duplicate trigger helper should detect existing refresh trigger.'
+  );
+
+  assertEquals_(
+    false,
+    hasProjectTriggerForHandler_(triggers, 'missingHandler'),
+    'Duplicate trigger helper should allow missing handler.'
+  );
+}
+
+function testCoordinatorRefreshProcessesOneRow_() {
+  const sheet = buildMockSummarySheet_();
+  const originalApply = EodReportCoordinator.applyToSummaryRows_;
+  let captured = null;
+
+  EodReportCoordinator.applyToSummaryRows_ = (actualSheet, startRow, rowCount) => {
+    captured = { actualSheet, startRow, rowCount };
+  };
+
+  try {
+    EodReportCoordinator.refreshSummaryRow(sheet, CONFIG.summary.headerRow + 4);
+  } finally {
+    EodReportCoordinator.applyToSummaryRows_ = originalApply;
+  }
+
+  assertTruthy_(captured, 'Coordinator refresh should call EOD row-range path.');
+  assertEquals_(sheet, captured.actualSheet, 'Coordinator refresh should use the provided sheet.');
+  assertEquals_(CONFIG.summary.headerRow + 4, captured.startRow, 'Coordinator refresh should use edited row.');
+  assertEquals_(1, captured.rowCount, 'Coordinator refresh should process exactly one row.');
+}
+
+function testCoordinatorRefreshDoesNotAppend_() {
+  const sheet = buildMockSummarySheet_();
+  const originalApply = EodReportCoordinator.applyToSummaryRows_;
+  const originalAppend = SummaryService.appendMissingSummaryRows;
+
+  EodReportCoordinator.applyToSummaryRows_ = () => {};
+  SummaryService.appendMissingSummaryRows = () => {
+    throw new Error('appendMissingSummaryRows must not be called during refresh.');
+  };
+
+  try {
+    EodReportCoordinator.refreshSummaryRow(sheet, CONFIG.summary.headerRow + 4);
+  } finally {
+    EodReportCoordinator.applyToSummaryRows_ = originalApply;
+    SummaryService.appendMissingSummaryRows = originalAppend;
+  }
+}
+
+function testCoordinatorRefreshUsesCurrentRowValues_() {
+  setup();
+
+  const sheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const headers = sheet
+    .getRange(CONFIG.summary.headerRow, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
+  const rowNumber = Math.max(sheet.getLastRow() + 1, CONFIG.summary.headerRow + 1);
+  const row = new Array(headers.length).fill('');
+  const orderCol = getColumnIndex_(headers, 'Order No.');
+  let seenOrder = '';
+
+  assertTruthy_(orderCol > 0, 'Summary Order No. column missing.');
+
+  row[0] = TEST_PREFIX + 'REFRESH_CURRENT_VALUES';
+  row[orderCol - 1] = '7654321';
+
+  sheet
+    .getRange(rowNumber, 1, 1, headers.length)
+    .setValues([row]);
+
+  const originalOutstanding = OutstandingOrdersEodReportService.applyToSummaryRows;
+  const originalPallet = PalletAndProductByMembersEodReportService.applyToSummaryRows;
+
+  OutstandingOrdersEodReportService.applyToSummaryRows = (context) => {
+    seenOrder = context.value('Order No.', 0);
+    return OutstandingOrdersEodReportService.createResult_();
+  };
+
+  PalletAndProductByMembersEodReportService.applyToSummaryRows = () =>
+    PalletAndProductByMembersEodReportService.createResult_();
+
+  try {
+    EodReportCoordinator.refreshSummaryRow(sheet, rowNumber);
+  } finally {
+    OutstandingOrdersEodReportService.applyToSummaryRows = originalOutstanding;
+    PalletAndProductByMembersEodReportService.applyToSummaryRows = originalPallet;
+  }
+
+  assertEquals_(
+    '7654321',
+    String(seenOrder),
+    'Coordinator refresh should read current summary row values.'
+  );
+}
+
 function testAppendMockRawRow_() {
   setup();
 
@@ -1862,6 +2133,64 @@ function testPdfProcessorHealth_() {
 /**
  * Mock builders
  */
+
+function buildMockSummaryRefreshEditEvent_(options) {
+  const refreshCol = options.refreshCol || CONFIG.summary.columns.length + 1;
+  const headers = new Array(Math.max(refreshCol, options.col || refreshCol)).fill('');
+
+  headers[0] = '_Key';
+  headers[refreshCol - 1] = 'Refresh EOD';
+
+  const sheet = buildMockSummarySheet_(options.sheetName, headers);
+  const range = {
+    valueSet: undefined,
+    getNumRows: () => options.numRows || 1,
+    getNumColumns: () => options.numCols || 1,
+    getSheet: () => sheet,
+    getRow: () => options.row,
+    getColumn: () => options.col,
+    setValue(value) {
+      this.valueSet = value;
+    }
+  };
+
+  return {
+    range,
+    value: options.value
+  };
+}
+
+function buildMockSummarySheet_(sheetName, headers) {
+  const headerValues = headers || [
+    '_Key',
+    ...CONFIG.summary.columns.map(column => column.header)
+  ];
+
+  return {
+    getName: () => sheetName || CONFIG.summary.sheetName,
+    getLastColumn: () => headerValues.length,
+    getRange(row, col, rowCount, colCount) {
+      return {
+        getValues: () => {
+          if (row === Number(CONFIG.summary.headerRow || 2)) {
+            return [headerValues.slice(col - 1, col - 1 + colCount)];
+          }
+
+          return [new Array(colCount).fill('')];
+        }
+      };
+    }
+  };
+}
+
+function buildMockLock_() {
+  return {
+    released: false,
+    releaseLock() {
+      this.released = true;
+    }
+  };
+}
 
 function runPalletProductRowTest_(options) {
   const context = buildMockPalletProductContext_(options.values || {}, options.notes || {});

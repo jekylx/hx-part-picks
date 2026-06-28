@@ -10,6 +10,23 @@ const EodReportCoordinator = {
     }
   },
 
+  refreshSummaryRow(sheet, rowNumber) {
+    this.validateRefreshTarget_(sheet, rowNumber);
+
+    try {
+      this.applyToSummaryRows_(sheet, rowNumber, 1);
+
+      this.logInfo_(
+        'EOD_REPORT_MANUAL_REFRESH_APPLIED',
+        '',
+        `Summary row: ${rowNumber}`
+      );
+    } catch (err) {
+      this.writeRefreshFailure_(sheet, rowNumber, err);
+      this.logError_('EOD_REPORT_MANUAL_REFRESH_FAILED', '', err);
+    }
+  },
+
   applyToSummaryRows_(sheet, startRow, rowCount) {
     if (!sheet || rowCount <= 0) {
       return;
@@ -41,6 +58,40 @@ const EodReportCoordinator = {
         this.formatResult_('OUTSTANDING ORDERS', outstandingOrdersResult)
       ].join(' | ')
     );
+  },
+
+  validateRefreshTarget_(sheet, rowNumber) {
+    if (!sheet) {
+      throw new Error('Manual EOD refresh requires a sheet.');
+    }
+
+    if (sheet.getName() !== CONFIG.summary.sheetName) {
+      throw new Error(`Manual EOD refresh requires ${CONFIG.summary.sheetName}.`);
+    }
+
+    const dataStartRow = Number(CONFIG.summary.headerRow || 2) + 1;
+
+    if (rowNumber < dataStartRow) {
+      throw new Error(`Manual EOD refresh requires a data row: ${rowNumber}.`);
+    }
+  },
+
+  writeRefreshFailure_(sheet, rowNumber, err) {
+    try {
+      const context = EodReportSummaryContextService.create(sheet, rowNumber, 1);
+      const validationRows = EodReportValidationService.create(1);
+      const message = err && err.message ? err.message : String(err);
+
+      EodReportValidationService.noMatch(
+        validationRows,
+        0,
+        `Manual EOD refresh failed: ${message}`
+      );
+      EodReportValidationService.write(context, validationRows);
+      context.write();
+    } catch (writeErr) {
+      this.logError_('EOD_REPORT_MANUAL_REFRESH_FAILURE_NOTE_FAILED', '', writeErr);
+    }
   },
 
   formatResult_(name, result) {
