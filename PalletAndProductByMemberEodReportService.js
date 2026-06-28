@@ -31,6 +31,9 @@ const PalletAndProductByMembersEodReportService = {
   },
 
   applyRow_(context, validationRows, rowIndex, lookup, dateKey, result) {
+    // Exact C/B pair matches are strongest. A unique single-sided match may
+    // correct the missing/wrong counterpart; ambiguous evidence becomes a
+    // validation note instead of a silent overwrite.
     const reportConfig = this.reportConfig_();
     const summaryColumns = reportConfig.summaryColumns;
 

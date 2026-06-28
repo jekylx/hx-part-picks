@@ -9,6 +9,9 @@ const SheetService = {
   },
 
   appendPartPickRow(ctx) {
+    // Part Picks is the raw ingestion sheet. Keep extracted values as plain
+    // text so identifiers with leading zeroes survive until summary/EOD
+    // normalisation decides how to display and validate them.
     const sheet = this.getSheet_(CONFIG.sheets.extractedSheetName);
     const form = ctx.form || {};
 
@@ -56,6 +59,8 @@ const SheetService = {
   },
 
   setupPartPicks_(ss) {
+    // Raw extraction headers. The user-facing summary sheet is derived later
+    // and may normalise or enrich these values.
     const sheet =
       ss.getSheetByName(CONFIG.sheets.extractedSheetName) ||
       ss.insertSheet(CONFIG.sheets.extractedSheetName);

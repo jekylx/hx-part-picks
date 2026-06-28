@@ -1,5 +1,8 @@
 const SummaryService = {
   appendMissingSummaryRows() {
+    // Summary is append-only. Existing summary rows may contain manual edits,
+    // so this flow only adds rows for raw Processing Keys that are not already
+    // present and then enriches those newly appended rows.
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const rawSheet = ss.getSheetByName(CONFIG.sheets.extractedSheetName);
 
@@ -94,6 +97,8 @@ const SummaryService = {
 
     CONFIG.summary.columns.forEach(column => {
       if (column.manual || column.type === 'sla') {
+        // Manual and calculated summary columns are owned by the operator or
+        // formulas, not by raw extraction.
         row.push('');
         return;
       }
@@ -119,6 +124,8 @@ const SummaryService = {
   getSummaryValue_(raw, column) {
     const value = raw[column.source];
 
+    // Raw Part Picks values are preserved as captured; normalisation begins
+    // when values are copied into the summary/EOD workflow.
     const field = CONFIG.fields.find(configField =>
       (configField.sheetColumn || configField.label) === column.source
     );

@@ -5,11 +5,16 @@
  * Critical rules:
  * - setup() is manual / one-time.
  * - processPrinterEmails() must not run setup().
- * - Gemini is optional.
- * - Gemini failure must not stop Drive save, sheet append, dedupe marking, or processed label.
- * - Part Picks stores raw Gemini output.
+ * - Gmail labels are thread-level visibility markers only; they are not dedupe.
+ * - The printer replies into the same daily Gmail thread, so processed/failed
+ *   threads must remain searchable for later scans in that thread.
+ * - Batch PDFs are deduped by BATCH::<md5(original PDF bytes)> before split.
+ * - Split pages are deduped by BATCH::<same hash>::PAGE-<pageNumber>.
+ * - Gemini is optional: extraction failure must still create a blank review row.
+ * - Critical failure only means Drive save and/or sheet append failed.
+ * - Critical page failure must prevent writing the batch-level completion key.
+ * - Part Picks stores raw Gemini output as plain text; summary/EOD normalises later.
  * - A row is successful if the PDF is saved to Drive and a row is appended to the sheet.
- * - Failure only means Drive save and/or sheet append failed.
  */
 
 function setup() {
@@ -27,6 +32,8 @@ function processPrinterEmails() {
   lock.waitLock(30000);
 
   try {
+    // Do not exclude Processed/Failed labels here: the printer keeps appending
+    // later scans as replies to the same daily Gmail thread.
     const query = GmailService.buildSearchQuery();
     const threads = GmailApp.search(query, 0, CONFIG.gmail.maxThreadsPerRun);
 
@@ -59,6 +66,9 @@ function processThread_(thread) {
     batchPdfs.forEach(batchPdf => {
       const batchProcessingKey = buildBatchProcessingKey_(batchPdf);
 
+      // Batch key is a fast pre-split completion marker for this exact original
+      // PDF. Older processed rows may only have page keys, so absence of this
+      // marker does not prove the pages are new.
       if (DedupeService.hasProcessed(batchProcessingKey)) {
         skippedAnyDuplicate = true;
 
@@ -78,6 +88,9 @@ function processThread_(thread) {
       pagePdfs.forEach(pagePdf => {
         const processingKey = buildPageProcessingKey_(batchPdf, pagePdf);
 
+        // Page keys protect row uniqueness and partial retries after a critical
+        // failure. A single existing page key must never be treated as proof
+        // that the whole batch completed.
         if (DedupeService.hasProcessed(processingKey)) {
           skippedAnyDuplicate = true;
 
@@ -142,6 +155,8 @@ function processThread_(thread) {
         }
       });
 
+      // Only mark the whole batch complete after every page was either already
+      // accounted for or successfully saved to Drive and appended to the sheet.
       if (allPagesAccountedFor) {
         DedupeService.markProcessed(
           batchProcessingKey,
@@ -166,6 +181,8 @@ function processThread_(thread) {
 
 function splitPdfOrFallbackToBatch_(batchPdf, message) {
   try {
+    // The scanner can merge back-to-back scans into one N-page PDF. The splitter
+    // service returns one portrait-oriented PDF per source page.
     const pagePdfs = PdfService.splitIntoPortraitPages(batchPdf);
 
     LogService.info(
@@ -179,6 +196,8 @@ function splitPdfOrFallbackToBatch_(batchPdf, message) {
   } catch (err) {
     const errorText = stringifyError_(err);
 
+    // Split failure is non-fatal to ingestion: archive the original batch PDF
+    // and create a review row so the operator still sees the work item.
     LogService.error(
       'PDF_SPLIT_FAILED_NON_FATAL',
       message.getId(),
@@ -234,6 +253,8 @@ function extractFormOrBlank_(pagePdfBlob, message, pagePdf) {
   } catch (err) {
     const errorText = stringifyError_(err);
 
+    // Extraction is advisory. A blank row that needs review is still a
+    // successful page if Drive save and sheet append complete.
     LogService.error(
       'GEMINI_FAILED_NON_FATAL',
       message.getId(),
@@ -264,6 +285,7 @@ function buildBlankForm_(reason) {
 }
 
 function buildPageProcessingKey_(batchPdf, pagePdf) {
+  // Format: BATCH::<md5(original batch PDF bytes)>::PAGE-<pageNumber>.
   return [
     buildBatchProcessingKey_(batchPdf),
     `PAGE-${pagePdf.pageNumber}`
@@ -271,6 +293,7 @@ function buildPageProcessingKey_(batchPdf, pagePdf) {
 }
 
 function buildBatchProcessingKey_(batchPdf) {
+  // Format: BATCH::<md5(original batch PDF bytes)>.
   return [
     'BATCH',
     Utils.md5Hex(batchPdf.getBytes())
@@ -278,6 +301,9 @@ function buildBatchProcessingKey_(batchPdf) {
 }
 
 function buildBatchPageDedupeStatus_(batchPdf, pagePdfs, processedKeys) {
+  // Test/debug helper that models the production dedupe contract: skip a batch
+  // before split only when the batch key exists, then evaluate each page key
+  // independently for backwards compatibility and partial retry safety.
   const normalizedProcessedKeys = {};
 
   (processedKeys || []).forEach(key => {

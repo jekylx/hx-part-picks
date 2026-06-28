@@ -1,5 +1,8 @@
 const GmailService = {
   buildSearchQuery() {
+    // The printer sends all scans for a day into one Gmail thread and later
+    // scans arrive as replies. Do not add -label filters for Processed/Failed:
+    // those labels are thread-level visibility only, not processing state.
     return [
       // `from:${CONFIG.gmail.from}`,
       `subject:"${this.escapeSearchPhrase_(CONFIG.gmail.subjectContains)}"`,

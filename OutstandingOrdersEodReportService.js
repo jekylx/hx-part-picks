@@ -31,6 +31,8 @@ const OutstandingOrdersEodReportService = {
   },
 
   applyRow_(context, validationRows, rowIndex, lookup, dateKey, result) {
+    // Outstanding Orders validates by order number, fills owner/carrier/state,
+    // and only corrects customer name when the EOD match is unique.
     const reportConfig = this.reportConfig_();
     const summaryColumns = reportConfig.summaryColumns;
 

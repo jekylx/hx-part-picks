@@ -1,4 +1,7 @@
 const EodReportValidationService = {
+  // Validation colours and notes are the operator-facing audit trail for EOD
+  // match quality: exact/corrected/no-match/mismatch should be visible instead
+  // of silently overwriting ambiguous data.
   LEVELS: {
     OK: 0,
     CORRECTED: 1,

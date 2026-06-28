@@ -1,5 +1,8 @@
 const EodReportCoordinator = {
   applyToSummaryRows(sheet, startRow, rowCount) {
+    // EOD lookup is a post-append enrichment step for the new summary rows.
+    // Lookup problems should be visible in logs/validation notes, but must not
+    // block the raw ingestion row that already reached the summary.
     try {
       this.applyToSummaryRows_(sheet, startRow, rowCount);
     } catch (err) {

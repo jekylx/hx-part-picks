@@ -11,6 +11,17 @@ const DedupeService = {
     return this.getProcessedKeys_().has(normalizedKey);
   },
 
+  /**
+   * Record a completed unit of work.
+   *
+   * Current rows may contain either:
+   * - BATCH::<md5(original batch PDF bytes)>
+   * - BATCH::<same hash>::PAGE-<pageNumber>
+   *
+   * Page keys remain important even when a batch key is later added: old rows
+   * may only have page keys, and partial retries must leave completed pages
+   * skipped while missing pages are reprocessed.
+   */
   markProcessed(key, message, pdf, archiveFile, formsExtracted) {
     const normalizedKey = this.normalizeKey_(key);
 
