@@ -3,11 +3,14 @@ const SummaryService = {
     // Summary is append-only. Existing summary rows may contain manual edits,
     // so this flow only adds rows for raw Processing Keys that are not already
     // present and then enriches those newly appended rows.
+    const stats = this.createAppendStats_();
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const rawSheet = ss.getSheetByName(CONFIG.sheets.extractedSheetName);
 
     if (!rawSheet) {
-      return;
+      stats.rawSheetFound = false;
+      this.logAppendStats_(stats);
+      return stats;
     }
 
     const summarySheet =
@@ -20,19 +23,34 @@ const SummaryService = {
 
     if (rawValues.length < 2) {
       this.formatSummary_(summarySheet);
-      return;
+      this.logAppendStats_(stats);
+      return stats;
     }
 
     const rawHeaders = rawValues[0];
+    stats.rawProcessingKeyHeaderFound = rawHeaders.indexOf('Processing Key') > -1;
+
     const rawRows = rawValues.slice(1);
+    stats.rawRowsScanned = rawRows.length;
+
     const existingSummaryKeys = this.getExistingSummaryKeys_(summarySheet);
+    stats.existingSummaryKeysFound = existingSummaryKeys.size;
+
     const rowsToAppend = [];
 
-    rawRows.forEach(rawRow => {
+    rawRows.forEach((rawRow, index) => {
       const raw = this.rowToObject_(rawHeaders, rawRow);
       const summaryKey = this.buildSummaryKey_(raw);
 
-      if (!summaryKey || existingSummaryKeys.has(summaryKey)) {
+      if (!summaryKey) {
+        stats.skippedBlankKey += 1;
+        this.recordSkippedRawRow_(stats, index + 2, 'blank Processing Key');
+        return;
+      }
+
+      if (existingSummaryKeys.has(summaryKey)) {
+        stats.skippedExistingKey += 1;
+        this.recordSkippedRawRow_(stats, index + 2, 'Processing Key already in summary');
         return;
       }
 
@@ -40,10 +58,7 @@ const SummaryService = {
     });
 
     if (rowsToAppend.length > 0) {
-      const startRow = Math.max(
-        summarySheet.getLastRow() + 1,
-        this.summaryDataStartRow_()
-      );
+      const startRow = this.getNextSummaryAppendRow_(summarySheet);
 
       summarySheet
         .getRange(startRow, 1, rowsToAppend.length, rowsToAppend[0].length)
@@ -58,7 +73,55 @@ const SummaryService = {
       );
     }
 
+    stats.missingRowsAppended = rowsToAppend.length;
+
     this.formatSummary_(summarySheet);
+
+    this.logAppendStats_(stats);
+
+    return stats;
+  },
+
+  createAppendStats_() {
+    return {
+      rawSheetFound: true,
+      rawProcessingKeyHeaderFound: true,
+      rawRowsScanned: 0,
+      existingSummaryKeysFound: 0,
+      missingRowsAppended: 0,
+      skippedBlankKey: 0,
+      skippedExistingKey: 0,
+      skippedRows: []
+    };
+  },
+
+  recordSkippedRawRow_(stats, rowNumber, reason) {
+    if (stats.skippedRows.length >= 10) {
+      return;
+    }
+
+    stats.skippedRows.push({
+      rowNumber,
+      reason
+    });
+  },
+
+  logAppendStats_(stats) {
+    const details = [
+      `rawSheetFound=${stats.rawSheetFound}`,
+      `rawProcessingKeyHeaderFound=${stats.rawProcessingKeyHeaderFound}`,
+      `rawRowsScanned=${stats.rawRowsScanned}`,
+      `existingSummaryKeysFound=${stats.existingSummaryKeysFound}`,
+      `missingRowsAppended=${stats.missingRowsAppended}`,
+      `skippedBlankKey=${stats.skippedBlankKey}`,
+      `skippedExistingKey=${stats.skippedExistingKey}`
+    ];
+
+    if (stats.skippedRows.length > 0) {
+      details.push(`sampleSkippedRows=${JSON.stringify(stats.skippedRows)}`);
+    }
+
+    Logger.log(`SummaryService.appendMissingSummaryRows: ${details.join(', ')}`);
   },
 
   summaryHeaderRow_() {
@@ -162,6 +225,29 @@ const SummaryService = {
     });
 
     return keys;
+  },
+
+  getNextSummaryAppendRow_(sheet) {
+    const startRow = this.summaryDataStartRow_();
+    const maxRows = sheet.getMaxRows();
+
+    if (maxRows < startRow) {
+      return startRow;
+    }
+
+    const values = sheet
+      .getRange(startRow, 1, maxRows - startRow + 1, 1)
+      .getValues();
+
+    let lastKeyRow = startRow - 1;
+
+    values.forEach((row, index) => {
+      if (String(row[0] || '').trim()) {
+        lastKeyRow = startRow + index;
+      }
+    });
+
+    return Math.max(lastKeyRow + 1, startRow);
   },
 
   applySlaFormulas_(sheet, startRow, rowCount) {

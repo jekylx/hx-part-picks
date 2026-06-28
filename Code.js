@@ -159,14 +159,35 @@ function hasProjectTriggerForHandler_(triggers, handlerName) {
 }
 
 function processPrinterEmails() {
-  const lock = LockService.getScriptLock();
+  processPrinterEmails_({
+    lockService: LockService,
+    gmailApp: GmailApp,
+    gmailService: GmailService,
+    summaryService: SummaryService,
+    threadProcessor: processThread_
+  });
+}
+
+function processPrinterEmails_(deps) {
+  const services = deps || {};
+  const lockService = services.lockService || LockService;
+  const gmailApp = services.gmailApp || GmailApp;
+  const gmailService = services.gmailService || GmailService;
+  const summaryService = services.summaryService || SummaryService;
+  const threadProcessor = services.threadProcessor || processThread_;
+  const lock = lockService.getScriptLock();
   lock.waitLock(30000);
 
   try {
+    Logger.log('processPrinterEmails start.');
+
     // Do not exclude Processed/Failed labels here: the printer keeps appending
     // later scans as replies to the same daily Gmail thread.
-    const query = GmailService.buildSearchQuery();
-    const threads = GmailApp.search(query, 0, CONFIG.gmail.maxThreadsPerRun);
+    const query = gmailService.buildSearchQuery();
+
+    Logger.log(`processPrinterEmails Gmail query: ${query}`);
+
+    const threads = gmailApp.search(query, 0, CONFIG.gmail.maxThreadsPerRun);
 
     LogService.info(
       'SEARCH',
@@ -174,13 +195,42 @@ function processPrinterEmails() {
       '',
       `Found ${threads.length} thread(s): ${query}`
     );
+    Logger.log(`processPrinterEmails found ${threads.length} thread(s).`);
 
-    threads.forEach(thread => processThread_(thread));
+    threads.forEach((thread, index) => {
+      try {
+        const threadId =
+          thread && typeof thread.getId === 'function'
+            ? thread.getId()
+            : `index ${index + 1}`;
 
-    SummaryService.appendMissingSummaryRows();
+        Logger.log(`processPrinterEmails processing thread ${index + 1}/${threads.length}: ${threadId}`);
+        threadProcessor(thread);
+      } catch (err) {
+        LogService.error(
+          'THREAD_FAILED_UNEXPECTED',
+          '',
+          '',
+          err,
+          ''
+        );
+        Logger.log('processPrinterEmails unexpected thread failure.');
+        Logger.log(err && err.stack ? err.stack : String(err));
+      }
+    });
+
+    Logger.log('processPrinterEmails appending missing summary rows.');
+    summaryService.appendMissingSummaryRows();
+    Logger.log('processPrinterEmails appended missing summary rows.');
   } finally {
+    Logger.log('processPrinterEmails end.');
     lock.releaseLock();
   }
+}
+
+function repairAppendMissingSummaryRows() {
+  const stats = SummaryService.appendMissingSummaryRows();
+  Logger.log(`Missing summary rows append repair complete: ${JSON.stringify(stats)}`);
 }
 
 function processThread_(thread) {

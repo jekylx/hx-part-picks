@@ -91,6 +91,10 @@ function runLocalTests() {
   runTest_('Coordinator refresh does not append summary rows', testCoordinatorRefreshDoesNotAppend_, results);
   runTest_('Coordinator refresh uses current summary row values', testCoordinatorRefreshUsesCurrentRowValues_, results);
   runTest_('Raw row append keeps raw values', testAppendMockRawRow_, results);
+  runTest_('Repair helper appends existing raw rows', testRepairAppendMissingSummaryRows_, results);
+  runTest_('Repair helper ignores inflated summary last row', testRepairAppendIgnoresInflatedSummaryLastRow_, results);
+  runTest_('Processor appends summary rows after thread failure', testProcessorAppendsSummaryAfterThreadFailure_, results);
+  runTest_('Summary append ignores inflated last row', testSummaryAppendIgnoresInflatedLastRow_, results);
   runTest_('Summary appends missing rows only', testSummaryAppendOnly_, results);
   runTest_('Batch and page processing keys are stable and unique', testPageProcessingKey_, results);
   runTest_('Legacy page key does not skip whole batch', testLegacyPageKeyDoesNotSkipBatch_, results);
@@ -2196,7 +2200,7 @@ function testCoordinatorRefreshUsesCurrentRowValues_() {
   const headers = sheet
     .getRange(CONFIG.summary.headerRow, 1, 1, sheet.getLastColumn())
     .getValues()[0];
-  const rowNumber = Math.max(sheet.getLastRow() + 1, CONFIG.summary.headerRow + 1);
+  const rowNumber = getNextTestSummaryRow_(sheet);
   const row = new Array(headers.length).fill('');
   const orderCol = getColumnIndex_(headers, 'Order No.');
   let seenOrder = '';
@@ -2298,6 +2302,186 @@ function testAppendMockRawRow_() {
   );
 }
 
+function testRepairAppendMissingSummaryRows_() {
+  setup();
+
+  const processingKey = TEST_PREFIX + 'REPAIR_APPEND_MISSING';
+  const ctx = buildMockAppendContext_(processingKey);
+
+  SheetService.appendPartPickRow(ctx);
+
+  withEodAppendStub_(() => {
+    repairAppendMissingSummaryRows();
+  });
+
+  const summarySheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const find = findRowByFirstColumnValue_(summarySheet, processingKey);
+
+  assertTruthy_(find.rowNumber > 0, 'Repair helper did not append existing raw row.');
+}
+
+function testRepairAppendIgnoresInflatedSummaryLastRow_() {
+  setup();
+
+  const existingKey = TEST_PREFIX + 'REPAIR_APPEND_PLACEMENT_EXISTING';
+  const newKey = TEST_PREFIX + 'REPAIR_APPEND_PLACEMENT_NEW';
+  let marker = null;
+
+  SheetService.appendPartPickRow(buildMockAppendContext_(existingKey));
+
+  withEodAppendStub_(() => {
+    repairAppendMissingSummaryRows();
+  });
+
+  const summarySheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const existingFind = findRowByFirstColumnValue_(summarySheet, existingKey);
+
+  assertTruthy_(
+    existingFind.rowNumber > 0,
+    'Repair placement setup did not append existing summary row.'
+  );
+
+  try {
+    marker = setInflatedSummaryLastRowMarker_(summarySheet);
+
+    SheetService.appendPartPickRow(buildMockAppendContext_(newKey));
+
+    withEodAppendStub_(() => {
+      repairAppendMissingSummaryRows();
+    });
+
+    const newFind = findRowByFirstColumnValue_(summarySheet, newKey);
+
+    assertEquals_(
+      existingFind.rowNumber + 1,
+      newFind.rowNumber,
+      'Repair helper should append after the last nonblank summary _Key.'
+    );
+
+    assertTruthy_(
+      newFind.rowNumber !== marker.rowNumber + 1,
+      'Repair helper incorrectly appended after an inflated non-key row.'
+    );
+  } finally {
+    clearInflatedSummaryLastRowMarker_(summarySheet, marker);
+  }
+}
+
+function testProcessorAppendsSummaryAfterThreadFailure_() {
+  let waited = false;
+  let released = false;
+  let searchCalled = false;
+  let summaryCalled = false;
+  let errorLogged = false;
+  const processedThreadIds = [];
+  const originalLogError = LogService.error;
+  const threads = [
+    {
+      getId: () => 'THREAD_FAIL'
+    },
+    {
+      getId: () => 'THREAD_OK'
+    }
+  ];
+
+  LogService.error = (status, messageId, filename, err) => {
+    errorLogged = status === 'THREAD_FAILED_UNEXPECTED' &&
+      err &&
+      String(err.message || err).indexOf('thread exploded') > -1;
+  };
+
+  try {
+    processPrinterEmails_({
+      lockService: {
+        getScriptLock: () => ({
+          waitLock: timeoutMs => {
+            waited = timeoutMs === 30000;
+          },
+          releaseLock: () => {
+            released = true;
+          }
+        })
+      },
+      gmailService: {
+        buildSearchQuery: () => 'in:inbox subject:"mock printer"'
+      },
+      gmailApp: {
+        search: (query, start, max) => {
+          searchCalled =
+            query === 'in:inbox subject:"mock printer"' &&
+            start === 0 &&
+            max === CONFIG.gmail.maxThreadsPerRun;
+
+          return threads;
+        }
+      },
+      threadProcessor: thread => {
+        const threadId = thread.getId();
+        processedThreadIds.push(threadId);
+
+        if (threadId === 'THREAD_FAIL') {
+          throw new Error('thread exploded');
+        }
+      },
+      summaryService: {
+        appendMissingSummaryRows: () => {
+          summaryCalled = true;
+        }
+      }
+    });
+  } finally {
+    LogService.error = originalLogError;
+  }
+
+  assertEquals_(true, waited, 'Processor did not wait for the script lock.');
+  assertEquals_(true, searchCalled, 'Processor did not run the configured Gmail search.');
+  assertEquals_('THREAD_FAIL|THREAD_OK', processedThreadIds.join('|'), 'Processor did not continue after thread failure.');
+  assertEquals_(true, errorLogged, 'Thread failure was not logged.');
+  assertEquals_(true, summaryCalled, 'Summary append was skipped after thread failure.');
+  assertEquals_(true, released, 'Processor did not release the script lock.');
+}
+
+function testSummaryAppendIgnoresInflatedLastRow_() {
+  setup();
+
+  const existingKey = TEST_PREFIX + 'SUMMARY_APPEND_PLACEMENT_EXISTING';
+  const newKey = TEST_PREFIX + 'SUMMARY_APPEND_PLACEMENT_NEW';
+  let marker = null;
+
+  SheetService.appendPartPickRow(buildMockAppendContext_(existingKey));
+  withEodAppendStub_(() => SummaryService.appendMissingSummaryRows());
+
+  const summarySheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const existingFind = findRowByFirstColumnValue_(summarySheet, existingKey);
+
+  assertTruthy_(
+    existingFind.rowNumber > 0,
+    'Summary placement setup did not append existing summary row.'
+  );
+
+  try {
+    marker = setInflatedSummaryLastRowMarker_(summarySheet);
+
+    SheetService.appendPartPickRow(buildMockAppendContext_(newKey));
+    withEodAppendStub_(() => SummaryService.appendMissingSummaryRows());
+
+    const newFind = findRowByFirstColumnValue_(summarySheet, newKey);
+
+    assertEquals_(
+      existingFind.rowNumber + 1,
+      newFind.rowNumber,
+      'Summary append should append after the last nonblank summary _Key.'
+    );
+
+    assertTruthy_(
+      newFind.rowNumber !== marker.rowNumber + 1,
+      'Summary append incorrectly used the inflated sheet last row.'
+    );
+  } finally {
+    clearInflatedSummaryLastRowMarker_(summarySheet, marker);
+  }
+}
+
 function testSummaryAppendOnly_() {
   setup();
 
@@ -2305,7 +2489,22 @@ function testSummaryAppendOnly_() {
   const ctx = buildMockAppendContext_(processingKey);
 
   SheetService.appendPartPickRow(ctx);
-  SummaryService.appendMissingSummaryRows();
+  const appendStats = withEodAppendStub_(() => SummaryService.appendMissingSummaryRows());
+
+  assertTruthy_(
+    appendStats.rawRowsScanned >= 1,
+    'Summary append stats did not report scanned raw rows.'
+  );
+
+  assertTruthy_(
+    appendStats.existingSummaryKeysFound >= 0,
+    'Summary append stats did not report existing summary keys.'
+  );
+
+  assertTruthy_(
+    appendStats.missingRowsAppended >= 1,
+    'Summary append stats did not report appended missing rows.'
+  );
 
   const summarySheet = SheetService.getSheet_(CONFIG.summary.sheetName);
   const firstFind = findRowByFirstColumnValue_(summarySheet, processingKey);
@@ -2341,7 +2540,9 @@ function testSummaryAppendOnly_() {
     .getRange(firstFind.rowNumber, carrierCol)
     .setValue('MANUAL CARRIER SHOULD STAY');
 
-  SummaryService.appendMissingSummaryRows();
+  withEodAppendStub_(() => {
+    SummaryService.appendMissingSummaryRows();
+  });
 
   const secondFind = findRowByFirstColumnValue_(summarySheet, processingKey);
 
@@ -2362,6 +2563,46 @@ function testSummaryAppendOnly_() {
     summarySheet.getRange(secondFind.rowNumber, carrierCol).getValue(),
     'Summary append-only failed: manual carrier edit was overwritten.'
   );
+}
+
+function withEodAppendStub_(callback) {
+  const originalApply = EodReportCoordinator.applyToSummaryRows;
+
+  EodReportCoordinator.applyToSummaryRows = () => {};
+
+  try {
+    return callback();
+  } finally {
+    EodReportCoordinator.applyToSummaryRows = originalApply;
+  }
+}
+
+function setInflatedSummaryLastRowMarker_(sheet) {
+  const markerRow = Math.max(1000, sheet.getLastRow() + 25);
+  const markerCol = 2;
+
+  if (sheet.getMaxRows() < markerRow) {
+    sheet.insertRowsAfter(sheet.getMaxRows(), markerRow - sheet.getMaxRows());
+  }
+
+  sheet
+    .getRange(markerRow, markerCol)
+    .setValue(false);
+
+  return {
+    rowNumber: markerRow,
+    columnNumber: markerCol
+  };
+}
+
+function clearInflatedSummaryLastRowMarker_(sheet, marker) {
+  if (!marker) {
+    return;
+  }
+
+  sheet
+    .getRange(marker.rowNumber, marker.columnNumber)
+    .clearContent();
 }
 
 function testPageProcessingKey_() {
@@ -3321,12 +3562,12 @@ function findRowsWhereFirstColumnStartsWith_(sheet, prefix) {
 }
 
 function deleteRowsWhereFirstColumnStartsWith_(sheet, prefix) {
-  const lastRow = sheet.getLastRow();
+  const maxRows = sheet.getMaxRows();
 
-  if (lastRow < 2) return;
+  if (maxRows < 2) return;
 
   const values = sheet
-    .getRange(2, 1, lastRow - 1, 1)
+    .getRange(2, 1, maxRows - 1, 1)
     .getValues();
 
   for (let index = values.length - 1; index >= 0; index--) {
@@ -3336,6 +3577,36 @@ function deleteRowsWhereFirstColumnStartsWith_(sheet, prefix) {
       sheet.deleteRow(index + 2);
     }
   }
+}
+
+function getNextTestSummaryRow_(sheet) {
+  if (
+    typeof SummaryService !== 'undefined' &&
+    typeof SummaryService.getNextSummaryAppendRow_ === 'function'
+  ) {
+    return SummaryService.getNextSummaryAppendRow_(sheet);
+  }
+
+  const startRow = Number(CONFIG.summary.headerRow || 2) + 1;
+  const maxRows = sheet.getMaxRows();
+
+  if (maxRows < startRow) {
+    return startRow;
+  }
+
+  const values = sheet
+    .getRange(startRow, 1, maxRows - startRow + 1, 1)
+    .getValues();
+
+  let lastKeyRow = startRow - 1;
+
+  values.forEach((row, index) => {
+    if (String(row[0] || '').trim()) {
+      lastKeyRow = startRow + index;
+    }
+  });
+
+  return Math.max(lastKeyRow + 1, startRow);
 }
 
 function getColumnIndex_(headers, headerName) {
