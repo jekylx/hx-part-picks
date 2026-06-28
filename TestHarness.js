@@ -108,8 +108,7 @@ function testConfigHasRequiredBlocks_() {
   assertTruthy_(Array.isArray(CONFIG.fields), 'CONFIG.fields must be an array.');
   assertTruthy_(CONFIG.fields.length > 0, 'CONFIG.fields cannot be empty.');
 
-  assertEquals_('guestprint@edg.com.au', CONFIG.gmail.from, 'Incorrect printer sender.');
-  assertEquals_('Message from', CONFIG.gmail.subjectContains, 'Incorrect subject matcher.');
+  assertEquals_('Message from "RNP5838795908AB"', CONFIG.gmail.subjectContains, 'Incorrect subject matcher.');
 
   assertTruthy_(CONFIG.pdf.processorEndpoint, 'CONFIG.pdf.processorEndpoint missing.');
   assertTruthy_(CONFIG.pdf.processorEndpoint.indexOf('/split') > -1, 'PDF processor endpoint should point to /split.');
@@ -132,11 +131,11 @@ function testConfigHasRequiredBlocks_() {
 function testGmailQuery_() {
   const query = GmailService.buildSearchQuery();
 
-  assertContains_(query, 'from:guestprint@edg.com.au', 'Gmail query missing sender.');
-  assertContains_(query, 'subject:"Message from"', 'Gmail query missing subject.');
+  assertContains_(query, 'subject:"Message from \\"RNP5838795908AB\\""', 'Gmail query missing subject.');
   assertContains_(query, 'has:attachment', 'Gmail query missing attachment filter.');
   assertContains_(query, 'filename:pdf', 'Gmail query missing PDF filter.');
-  assertContains_(query, '-label:"PartPick/Processed"', 'Gmail query missing processed-label exclusion.');
+  assertContains_(query, 'label:"Inbox"', 'Gmail query missing inbox label filter.');
+  assertContains_(query, 'newer_than:7d', 'Gmail query missing search window.');
 }
 
 function testPromptRules_() {
@@ -265,22 +264,22 @@ function testSummaryAppendOnly_() {
   }
 
   const headers = summarySheet
-    .getRange(1, 1, 1, summarySheet.getLastColumn())
+    .getRange(CONFIG.summary.headerRow, 1, 1, summarySheet.getLastColumn())
     .getValues()[0];
 
   const customerCol = getColumnIndex_(headers, 'Customer Name');
-  const notesCol = getColumnIndex_(headers, 'Notes');
+  const carrierCol = getColumnIndex_(headers, 'Carrier');
 
   assertTruthy_(customerCol > 0, 'Summary Customer Name column missing.');
-  assertTruthy_(notesCol > 0, 'Summary Notes column missing.');
+  assertTruthy_(carrierCol > 0, 'Summary Carrier column missing.');
 
   summarySheet
     .getRange(firstFind.rowNumber, customerCol)
     .setValue('MANUAL CUSTOMER OVERRIDE');
 
   summarySheet
-    .getRange(firstFind.rowNumber, notesCol)
-    .setValue('MANUAL NOTE SHOULD STAY');
+    .getRange(firstFind.rowNumber, carrierCol)
+    .setValue('MANUAL CARRIER SHOULD STAY');
 
   SummaryService.appendMissingSummaryRows();
 
@@ -299,9 +298,9 @@ function testSummaryAppendOnly_() {
   );
 
   assertEquals_(
-    'MANUAL NOTE SHOULD STAY',
-    summarySheet.getRange(secondFind.rowNumber, notesCol).getValue(),
-    'Summary append-only failed: manual notes were overwritten.'
+    'MANUAL CARRIER SHOULD STAY',
+    summarySheet.getRange(secondFind.rowNumber, carrierCol).getValue(),
+    'Summary append-only failed: manual carrier edit was overwritten.'
   );
 }
 

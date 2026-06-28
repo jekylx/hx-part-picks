@@ -12,15 +12,15 @@
  * - Failure only means Drive save and/or sheet append failed.
  */
 
-// function setup() {
-//   LabelService.setupLabels();
-//   SheetService.setupSheets();
-//   DriveService.setupFolders();
-//   SummaryService.appendMissingSummaryRows();
-//   SheetService.hideImplementationSheets();
+function setup() {
+  LabelService.setupLabels();
+  SheetService.setupSheets();
+  DriveService.setupFolders();
+  SummaryService.appendMissingSummaryRows();
+  SheetService.hideImplementationSheets();
 
-//   Logger.log('Setup complete. Add a time trigger for processPrinterEmails.');
-// }
+  Logger.log('Setup complete. Add a time trigger for processPrinterEmails.');
+}
 
 function processPrinterEmails() {
   const lock = LockService.getScriptLock();
@@ -46,8 +46,8 @@ function processPrinterEmails() {
 }
 
 function processThread_(thread) {
-  const processedLabel = GmailApp.getUserLabelByName(CONFIG.gmail.processedLabel);
-  const failedLabel = GmailApp.getUserLabelByName(CONFIG.gmail.failedLabel);
+  const processedLabel = LabelService.getOrCreateLabel_(CONFIG.gmail.processedLabel);
+  const failedLabel = LabelService.getOrCreateLabel_(CONFIG.gmail.failedLabel);
 
   let anyCriticalFailure = false;
   let processedAnyPdf = false;

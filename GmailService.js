@@ -2,7 +2,7 @@ const GmailService = {
   buildSearchQuery() {
     return [
       // `from:${CONFIG.gmail.from}`,
-      `subject:"${CONFIG.gmail.subjectContains}"`,
+      `subject:"${this.escapeSearchPhrase_(CONFIG.gmail.subjectContains)}"`,
       'has:attachment',
       'filename:pdf',
       `label:"${CONFIG.gmail.inboxLabel}"`,
@@ -24,6 +24,12 @@ const GmailService = {
     const contentType = String(attachment.getContentType() || '').toLowerCase();
 
     return contentType === 'application/pdf' || name.endsWith('.pdf');
+  },
+
+  escapeSearchPhrase_(value) {
+    return String(value || '')
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"');
   }
 };
 
