@@ -288,22 +288,22 @@ function testOutstandingOrdersOrderParsing_() {
 }
 
 function testOutstandingOrdersSearchCriteriaBParsing_() {
-  let parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V1990&OB1033381');
+  let parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V1990&OB1234567');
 
   assertEquals_('ok', parsed.status, 'Valid Search Criteria should parse.');
-  assertEquals_('B1033381', parsed.bNumber, 'Original pallet segment should normalize to B Number.');
+  assertEquals_('B1234567', parsed.bNumber, 'Original pallet segment should normalize to B Number.');
 
-  parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V2000&OB0933522');
+  parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V2000&OB0234567');
 
   assertEquals_('ok', parsed.status, 'Leading bottle-size BB must not be treated as B Number.');
-  assertEquals_('B0933522', parsed.bNumber, 'O segment should preserve leading zeroes after B.');
+  assertEquals_('B0234567', parsed.bNumber, 'O segment should preserve leading zeroes after B.');
 
   parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V1990');
 
   assertEquals_('missing', parsed.status, 'Search Criteria without O segment should be missing.');
   assertEquals_('', parsed.bNumber, 'Missing O segment should not return a B Number.');
 
-  parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V1990&OB1033381&OB1033382');
+  parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V1990&OB1234567&OB1234568');
 
   assertEquals_('ambiguous', parsed.status, 'Multiple O segments should be ambiguous.');
   assertEquals_('', parsed.bNumber, 'Ambiguous O segments should not return a B Number.');
@@ -434,14 +434,14 @@ function testEodStateValidation_() {
 
 function testEodCustomerNameNormalisation_() {
   assertEquals_(
-    'andrew viner',
-    EodReportNormalisationService.normalizeName('ANDREW VINER'),
+    'example customer',
+    EodReportNormalisationService.normalizeName('EXAMPLE CUSTOMER'),
     'Customer name should normalize to lowercase.'
   );
 
   assertEquals_(
-    'andrew viner',
-    EodReportNormalisationService.normalizeName('  Andrew   Viner  '),
+    'example customer',
+    EodReportNormalisationService.normalizeName('  Example   Customer  '),
     'Customer name should trim and collapse whitespace.'
   );
 
@@ -464,8 +464,8 @@ function testEodCustomerNameNormalisation_() {
   );
 
   assertEquals_(
-    EodReportNormalisationService.normalizeName('Andrew  Viner'),
-    EodReportNormalisationService.normalizeName(' andrew viner '),
+    EodReportNormalisationService.normalizeName('Example  Customer'),
+    EodReportNormalisationService.normalizeName(' example customer '),
     'Customer name comparison should ignore case and spacing.'
   );
 }
@@ -800,40 +800,40 @@ function testOutstandingOrdersGroupsByOrderAndBNumber_() {
   const lookup = OutstandingOrdersEodReportService.buildLookup_(
     buildMockOutstandingOrdersReport_([
       buildOutstandingOrdersCsvRow_({
-        orderNo: 'AQQFB1403534',
-        searchCriteria: 'BB&V1990&OB1033381',
+        orderNo: 'TESTA1400001',
+        searchCriteria: 'BB&V1990&OB1234501',
         qtyOrd: '1'
       }),
       buildOutstandingOrdersCsvRow_({
-        orderNo: 'AQQFB1403534',
-        searchCriteria: 'BB&V1990&OB1033387',
+        orderNo: 'TESTA1400001',
+        searchCriteria: 'BB&V1990&OB1234502',
         qtyOrd: '1'
       }),
       buildOutstandingOrdersCsvRow_({
-        orderNo: 'AQQFB1403534',
-        searchCriteria: 'BB&V1990&OB1033390',
+        orderNo: 'TESTA1400001',
+        searchCriteria: 'BB&V1990&OB1234503',
         qtyOrd: '2'
       }),
       buildOutstandingOrdersCsvRow_({
-        orderNo: 'AQQFB1403534',
-        searchCriteria: 'BB&V1990&OB1033393',
+        orderNo: 'TESTA1400001',
+        searchCriteria: 'BB&V1990&OB1234504',
         qtyOrd: '3'
       }),
       buildOutstandingOrdersCsvRow_({
-        orderNo: 'AQQFB1403534',
+        orderNo: 'TESTA1400001',
         searchCriteria: 'BB&V1990&OABC',
         qtyOrd: '4'
       })
     ])
   );
 
-  const order = lookup.byOrderNumber['1403534'];
+  const order = lookup.byOrderNumber['1400001'];
 
   assertEquals_(11, order.orderTotalQtyOrd, 'Order total should include valid numeric Qty Ord even when Search Criteria B is invalid.');
-  assertEquals_(1, order.bNumbers.B1033381.qtyOrdSum, 'First B group quantity should be stored.');
-  assertEquals_(1, order.bNumbers.B1033387.qtyOrdSum, 'Second B group quantity should be stored.');
-  assertEquals_(2, order.bNumbers.B1033390.qtyOrdSum, 'Third B group quantity should be stored.');
-  assertEquals_(3, order.bNumbers.B1033393.qtyOrdSum, 'Fourth B group quantity should be stored.');
+  assertEquals_(1, order.bNumbers.B1234501.qtyOrdSum, 'First B group quantity should be stored.');
+  assertEquals_(1, order.bNumbers.B1234502.qtyOrdSum, 'Second B group quantity should be stored.');
+  assertEquals_(2, order.bNumbers.B1234503.qtyOrdSum, 'Third B group quantity should be stored.');
+  assertEquals_(3, order.bNumbers.B1234504.qtyOrdSum, 'Fourth B group quantity should be stored.');
   assertEquals_(
     undefined,
     order.bNumbers.OABC,
@@ -844,8 +844,8 @@ function testOutstandingOrdersGroupsByOrderAndBNumber_() {
 function testOutstandingOrdersSummaryMatchesCorrectOrderBLine_() {
   const restore = stubPalletLookupForTest_({
     byBNumber: {
-      B1033387: [
-        { owner: 'AQQFB' }
+      B1234502: [
+        { owner: 'TESTA' }
       ]
     }
   });
@@ -854,30 +854,30 @@ function testOutstandingOrdersSummaryMatchesCorrectOrderBLine_() {
     const context = buildMockOutstandingOrdersContext_({
       'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
       'Owner': '',
-      'Order No.': '1403534',
+      'Order No.': '1400001',
       'Customer Name': 'Old Customer',
       'Carrier': '',
       'State': '',
-      'B Number': 'B1033387'
+      'B Number': 'B1234502'
     });
     const validationRows = EodReportValidationService.create(1);
     const result = OutstandingOrdersEodReportService.createResult_();
     const lookup = OutstandingOrdersEodReportService.buildLookup_(
       buildMockOutstandingOrdersReport_([
         buildOutstandingOrdersCsvRow_({
-          orderNo: 'AQQFB1403534',
+          orderNo: 'TESTA1400001',
           customerName: 'Wrong B Customer',
           carrierCode: 'AP',
           customerState: 'NSW',
-          searchCriteria: 'BB&V1990&OB1033381',
+          searchCriteria: 'BB&V1990&OB1234501',
           qtyOrd: '1'
         }),
         buildOutstandingOrdersCsvRow_({
-          orderNo: 'AQQFB1403534',
+          orderNo: 'TESTA1400001',
           customerName: 'Right B Customer',
           carrierCode: 'NXM',
           customerState: 'VIC',
-          searchCriteria: 'BB&V1990&OB1033387',
+          searchCriteria: 'BB&V1990&OB1234502',
           qtyOrd: '1'
         })
       ])
@@ -892,7 +892,7 @@ function testOutstandingOrdersSummaryMatchesCorrectOrderBLine_() {
       result
     );
 
-    assertEquals_('AQQFB', context.values['Owner'], 'Matched Order+B line should write Owner.');
+    assertEquals_('TESTA', context.values['Owner'], 'Matched Order+B line should write Owner.');
     assertEquals_('Right B Customer', context.values['Customer Name'], 'Matched Order+B line should correct Customer Name.');
     assertEquals_('NXM', context.values['Carrier'], 'Matched Order+B line should fill Carrier.');
     assertEquals_('VIC', context.values['State'], 'Matched Order+B line should fill State.');
@@ -903,15 +903,15 @@ function testOutstandingOrdersSummaryMatchesCorrectOrderBLine_() {
 
 function testOutstandingOrdersRepeatedSameBQty_() {
   const rows = [1, 1, 2, 1].map(qtyOrd => buildOutstandingOrdersCsvRow_({
-    orderNo: 'AXXEW1403038',
-    searchCriteria: 'BB&V2000&OB0933522',
+    orderNo: 'TESTB1400002',
+    searchCriteria: 'BB&V2000&OB0234567',
     qtyOrd: String(qtyOrd)
   }));
   const lookup = OutstandingOrdersEodReportService.buildLookup_(
     buildMockOutstandingOrdersReport_(rows)
   );
-  const order = lookup.byOrderNumber['1403038'];
-  const group = lookup.byOrderNumberAndBNumber['1403038::B0933522'];
+  const order = lookup.byOrderNumber['1400002'];
+  const group = lookup.byOrderNumberAndBNumber['1400002::B0234567'];
 
   assertEquals_(5, order.orderTotalQtyOrd, 'Repeated same-B rows should sum to order total.');
   assertEquals_(5, group.qtyOrdSum, 'Repeated same-B rows should sum to B group quantity.');
@@ -924,7 +924,7 @@ function testOutstandingOrdersCanonicalIdentityNotAmbiguous_() {
     buildMockOutstandingOrdersReport_([
       buildOutstandingOrdersCsvRow_({
         orderNo: 'ABCDE123',
-        customerName: 'Hung   Hoang',
+        customerName: 'Customer   One',
         carrierCode: 'ap',
         customerState: ' vic ',
         searchCriteria: 'BB&V1990&OB1234567',
@@ -932,7 +932,7 @@ function testOutstandingOrdersCanonicalIdentityNotAmbiguous_() {
       }),
       buildOutstandingOrdersCsvRow_({
         orderNo: 'ABCDE123',
-        customerName: 'HUNG HOANG',
+        customerName: 'CUSTOMER ONE',
         carrierCode: 'AP',
         customerState: 'VIC',
         searchCriteria: 'BB&V1990&OB1234567',
@@ -1030,7 +1030,7 @@ function testOutstandingOrdersCanonicalIdentityAmbiguous_() {
     buildMockOutstandingOrdersReport_([
       buildOutstandingOrdersCsvRow_({
         orderNo: 'ABCDE123',
-        customerName: 'Hung Hoang',
+        customerName: 'Customer One',
         carrierCode: 'AP',
         customerState: 'VIC',
         searchCriteria: 'BB&V1990&OB1234567',
@@ -1099,8 +1099,8 @@ function testOutstandingOrdersMissingBMatchBlocks_() {
 function testOutstandingOrdersDoesNotFillFromSameOrderOtherB_() {
   const restore = stubPalletLookupForTest_({
     byBNumber: {
-      B1033387: [
-        { owner: 'AQQFB' }
+      B1234502: [
+        { owner: 'TESTA' }
       ]
     }
   });
@@ -1110,11 +1110,11 @@ function testOutstandingOrdersDoesNotFillFromSameOrderOtherB_() {
       customerName: 'Old Customer',
       carrier: '',
       state: '',
-      bNumber: 'B1033387',
+      bNumber: 'B1234502',
       match: {
-        owner: 'AQQFB',
-        orderNumber: '1403534',
-        searchCriteriaBNumber: 'B1033381',
+        owner: 'TESTA',
+        orderNumber: '1400001',
+        searchCriteriaBNumber: 'B1234501',
         customerName: 'Other Stock Line',
         carrierCode: 'AP',
         customerState: 'VIC'
@@ -1987,9 +1987,9 @@ function buildMockAppendContext_(processingKey) {
     form_date: '30/4/26',
     state: 'VIC',
     weather_status: 'SHIP',
-    picker: 'Louise',
+    picker: 'Warehouse User',
     order_number: '140O385',
-    customer_name: 'Andrew Viner',
+    customer_name: 'Example Customer',
     member_code: null,
     original_location: '1 g20 e2',
     b_code: '0888230',

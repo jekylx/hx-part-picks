@@ -54,7 +54,7 @@ git diff --check
 If Git reports dubious ownership in the sandbox, use:
 
 ```powershell
-git -c safe.directory=C:/Users/jesse/CodeProjects/hx-part-picks diff --check
+git -c safe.directory=C:/path/to/hx-part-picks diff --check
 ```
 
 ## Apps Script Limitations
