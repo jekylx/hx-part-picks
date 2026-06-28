@@ -32,6 +32,9 @@ function runLocalTests() {
   runTest_('Order number normalisation accepts variable length', testOrderNumberNormalisation_, results);
   runTest_('Outstanding Orders order parsing accepts variable length', testOutstandingOrdersOrderParsing_, results);
   runTest_('EOD strict carrier/state validation helpers work', testEodStrictValidationHelpers_, results);
+  runTest_('Outstanding Orders customer correction requires B owner confirmation', testOutstandingOrdersCustomerOwnerGate_, results);
+  runTest_('Outstanding Orders blocks customer correction without B owner confirmation', testOutstandingOrdersCustomerOwnerGateBlocks_, results);
+  runTest_('Outstanding Orders guards carrier and state corrections', testOutstandingOrdersCarrierStateGuards_, results);
   runTest_('Prompt contains raw extraction rules', testPromptRules_, results);
   runTest_('Sheet setup creates expected sheets', testSheetSetup_, results);
   runTest_('Raw row append keeps raw values', testAppendMockRawRow_, results);
@@ -235,6 +238,224 @@ function testEodStrictValidationHelpers_() {
       `State should be invalid: ${state}`
     );
   });
+}
+
+function testOutstandingOrdersCustomerOwnerGate_() {
+  const restore = stubPalletLookupForTest_({
+    byBNumber: {
+      B1234567: [
+        { owner: 'ABCDE' }
+      ]
+    }
+  });
+
+  try {
+    const outcome = runOutstandingOrdersRowTest_({
+      customerName: 'Old Customer',
+      carrier: 'AP',
+      state: 'NSW',
+      match: {
+        owner: 'ABCDE',
+        orderNumber: '123',
+        customerName: 'New Customer',
+        carrierCode: 'NXM',
+        customerState: 'VIC'
+      }
+    });
+
+    assertEquals_(
+      'New Customer',
+      outcome.context.values['Customer Name'],
+      'Customer Name should be corrected when B owner confirms order owner.'
+    );
+
+    assertContains_(
+      outcome.validationRows[0].notes.join('\n'),
+      'corrected Customer Name',
+      'Customer correction should add a correction note.'
+    );
+  } finally {
+    restore();
+  }
+}
+
+function testOutstandingOrdersCustomerOwnerGateBlocks_() {
+  let restore = stubPalletLookupForTest_({
+    byBNumber: {
+      B1234567: [
+        { owner: 'VWXYZ' }
+      ]
+    }
+  });
+
+  try {
+    let outcome = runOutstandingOrdersRowTest_({
+      customerName: 'Old Customer',
+      carrier: 'AP',
+      state: 'NSW',
+      match: {
+        owner: 'ABCDE',
+        orderNumber: '123',
+        customerName: 'New Customer',
+        carrierCode: 'NXM',
+        customerState: 'VIC'
+      }
+    });
+
+    assertEquals_(
+      'Old Customer',
+      outcome.context.values['Customer Name'],
+      'Customer Name should stay unchanged when B owner mismatches.'
+    );
+
+    assertContains_(
+      outcome.validationRows[0].notes.join('\n'),
+      'does not match B Number owner VWXYZ',
+      'Owner mismatch should add a blocked-correction note.'
+    );
+  } finally {
+    restore();
+  }
+
+  restore = stubPalletLookupForTest_(null);
+
+  try {
+    let outcome = runOutstandingOrdersRowTest_({
+      customerName: 'Old Customer',
+      carrier: 'AP',
+      state: 'NSW',
+      match: {
+        owner: 'ABCDE',
+        orderNumber: '123',
+        customerName: 'New Customer',
+        carrierCode: 'NXM',
+        customerState: 'VIC'
+      }
+    });
+
+    assertEquals_(
+      'Old Customer',
+      outcome.context.values['Customer Name'],
+      'Customer Name should stay unchanged when Pallet/Product lookup is missing.'
+    );
+
+    assertContains_(
+      outcome.validationRows[0].notes.join('\n'),
+      'B Number owner could not confirm order owner',
+      'Missing owner confirmation should add a blocked-correction note.'
+    );
+  } finally {
+    restore();
+  }
+
+  restore = stubPalletLookupForTest_({
+    byBNumber: {
+      B1234567: [
+        { owner: 'ABCDE' },
+        { owner: 'VWXYZ' }
+      ]
+    }
+  });
+
+  try {
+    const outcome = runOutstandingOrdersRowTest_({
+      customerName: 'Old Customer',
+      carrier: 'AP',
+      state: 'NSW',
+      match: {
+        owner: 'ABCDE',
+        orderNumber: '123',
+        customerName: 'New Customer',
+        carrierCode: 'NXM',
+        customerState: 'VIC'
+      }
+    });
+
+    assertEquals_(
+      'Old Customer',
+      outcome.context.values['Customer Name'],
+      'Customer Name should stay unchanged when B owner is ambiguous.'
+    );
+
+    assertContains_(
+      outcome.validationRows[0].notes.join('\n'),
+      'B Number owner could not confirm order owner',
+      'Ambiguous owner confirmation should add a blocked-correction note.'
+    );
+  } finally {
+    restore();
+  }
+}
+
+function testOutstandingOrdersCarrierStateGuards_() {
+  let outcome = runOutstandingOrdersRowTest_({
+    customerName: 'Same Customer',
+    carrier: '',
+    state: '',
+    match: {
+      owner: 'ABCDE',
+      orderNumber: '123',
+      customerName: 'Same Customer',
+      carrierCode: 'AP',
+      customerState: 'SA'
+    }
+  });
+
+  assertEquals_('AP', outcome.context.values['Carrier'], 'Blank Carrier should be filled from valid report Carrier.');
+  assertEquals_('SA', outcome.context.values['State'], 'Blank State should be filled from valid report State.');
+
+  outcome = runOutstandingOrdersRowTest_({
+    customerName: 'Same Customer',
+    carrier: 'BAD',
+    state: 'BAD',
+    match: {
+      owner: 'ABCDE',
+      orderNumber: '123',
+      customerName: 'Same Customer',
+      carrierCode: 'AC',
+      customerState: 'QLD'
+    }
+  });
+
+  assertEquals_('AC', outcome.context.values['Carrier'], 'Invalid Carrier should be corrected from valid report Carrier.');
+  assertEquals_('QLD', outcome.context.values['State'], 'Invalid State should be corrected from valid report State.');
+
+  outcome = runOutstandingOrdersRowTest_({
+    customerName: 'Same Customer',
+    carrier: 'NXM',
+    state: 'SA',
+    match: {
+      owner: 'ABCDE',
+      orderNumber: '123',
+      customerName: 'Same Customer',
+      carrierCode: 'AP',
+      customerState: 'VIC'
+    }
+  });
+
+  assertEquals_('NXM', outcome.context.values['Carrier'], 'Existing valid Carrier should be preserved.');
+  assertEquals_('SA', outcome.context.values['State'], 'Existing valid State should be preserved.');
+
+  outcome = runOutstandingOrdersRowTest_({
+    customerName: 'Same Customer',
+    carrier: 'BAD',
+    state: 'BAD',
+    match: {
+      owner: 'ABCDE',
+      orderNumber: '123',
+      customerName: 'Same Customer',
+      carrierCode: 'AUSPOST',
+      customerState: 'BADSTATE'
+    }
+  });
+
+  assertEquals_('BAD', outcome.context.values['Carrier'], 'Invalid Carrier should stay unchanged when report Carrier is invalid.');
+  assertEquals_('BAD', outcome.context.values['State'], 'Invalid State should stay unchanged when report State is invalid.');
+
+  const notes = outcome.validationRows[0].notes.join('\n');
+
+  assertContains_(notes, 'Carrier not corrected', 'Invalid report Carrier should add a validation note.');
+  assertContains_(notes, 'State not corrected', 'Invalid report State should add a validation note.');
 }
 
 function testPromptRules_() {
@@ -605,6 +826,67 @@ function buildMockAppendContext_(processingKey) {
     processingKey,
     extractionStatus: 'AUTO_EXTRACTED',
     extractionError: ''
+  };
+}
+
+function runOutstandingOrdersRowTest_(options) {
+  const match = options.match;
+  const context = buildMockOutstandingOrdersContext_({
+    'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
+    'Owner': '',
+    'Order No.': match.orderNumber,
+    'Customer Name': options.customerName,
+    'Carrier': options.carrier,
+    'State': options.state,
+    'B Number': options.bNumber || 'B1234567'
+  });
+
+  const validationRows = EodReportValidationService.create(1);
+  const result = OutstandingOrdersEodReportService.createResult_();
+  const lookup = {
+    byOrderNumber: {}
+  };
+
+  lookup.byOrderNumber[match.orderNumber] = [match];
+
+  OutstandingOrdersEodReportService.applyRow_(
+    context,
+    validationRows,
+    0,
+    lookup,
+    '2026-05-01',
+    result
+  );
+
+  return {
+    context,
+    validationRows,
+    result
+  };
+}
+
+function buildMockOutstandingOrdersContext_(values) {
+  return {
+    rowCount: 1,
+    values,
+
+    value(headerName) {
+      return this.values[headerName] || '';
+    },
+
+    setValue(headerName, rowIndex, value) {
+      this.values[headerName] = value;
+    }
+  };
+}
+
+function stubPalletLookupForTest_(lookup) {
+  const original = PalletAndProductByMembersEodReportService.getLookupForDate;
+
+  PalletAndProductByMembersEodReportService.getLookupForDate = () => lookup;
+
+  return function restore() {
+    PalletAndProductByMembersEodReportService.getLookupForDate = original;
   };
 }
 

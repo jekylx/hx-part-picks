@@ -31,13 +31,15 @@ const OutstandingOrdersEodReportService = {
   },
 
   applyRow_(context, validationRows, rowIndex, lookup, dateKey, result) {
-    // Outstanding Orders validates by order number, fills owner/carrier/state,
-    // and only corrects customer name when the EOD match is unique.
+    // Outstanding Orders validates by order number and fills owner. Customer
+    // name needs B-owner confirmation before correction.
     const reportConfig = this.reportConfig_();
     const summaryColumns = reportConfig.summaryColumns;
 
     const beforeOrderNumber = context.value(summaryColumns.orderNumber, rowIndex);
     const beforeCustomerName = context.value(summaryColumns.customerName, rowIndex);
+    const beforeCarrier = context.value(summaryColumns.carrierCode, rowIndex);
+    const beforeState = context.value(summaryColumns.customerState, rowIndex);
     const orderNumber = EodReportNormalisationService.normalizeSummaryOrderNumber(beforeOrderNumber);
 
     if (!orderNumber) {
@@ -79,11 +81,80 @@ const OutstandingOrdersEodReportService = {
 
     context.setValue(summaryColumns.owner, rowIndex, match.owner);
 
+    let changed = false;
+
+    changed = this.applyCustomerNameCorrection_(
+      context,
+      validationRows,
+      rowIndex,
+      dateKey,
+      match,
+      beforeCustomerName,
+      result
+    ) || changed;
+
+    changed = this.applyGuardedFieldCorrection_(
+      context,
+      validationRows,
+      rowIndex,
+      summaryColumns.carrierCode,
+      'Carrier',
+      beforeCarrier,
+      match.carrierCode,
+      EodReportNormalisationService.isValidCarrier.bind(EodReportNormalisationService),
+      result
+    ) || changed;
+
+    changed = this.applyGuardedFieldCorrection_(
+      context,
+      validationRows,
+      rowIndex,
+      summaryColumns.customerState,
+      'State',
+      beforeState,
+      match.customerState,
+      EodReportNormalisationService.isValidState.bind(EodReportNormalisationService),
+      result
+    ) || changed;
+
+    if (!changed) {
+      EodReportValidationService.ok(validationRows, rowIndex);
+    }
+
+    result.filled++;
+  },
+
+  applyCustomerNameCorrection_(context, validationRows, rowIndex, dateKey, match, beforeCustomerName, result) {
+    const reportConfig = this.reportConfig_();
+    const summaryColumns = reportConfig.summaryColumns;
+
     if (
       match.customerName &&
       EodReportNormalisationService.normalizeName(match.customerName) !==
         EodReportNormalisationService.normalizeName(beforeCustomerName)
     ) {
+      const ownerCheck = this.getBNumberOwnerConfirmation_(context, rowIndex, dateKey);
+
+      if (ownerCheck.status !== 'unique') {
+        EodReportValidationService.noMatch(
+          validationRows,
+          rowIndex,
+          `${reportConfig.displayName}: Customer Name not corrected: B Number owner could not confirm order owner.`
+        );
+        result.notFound++;
+        return false;
+      }
+
+      if (ownerCheck.owner !== match.owner) {
+        EodReportValidationService.noMatch(
+          validationRows,
+          rowIndex,
+          `${reportConfig.displayName}: Customer Name not corrected: order owner ${match.owner || '(blank)'} does not match B Number owner ${ownerCheck.owner || '(blank)'}.`
+        );
+        result.notFound++;
+        return false;
+      }
+
       context.setValue(summaryColumns.customerName, rowIndex, match.customerName);
       EodReportValidationService.corrected(
         validationRows,
@@ -95,13 +166,54 @@ const OutstandingOrdersEodReportService = {
         ].join('\n')
       );
       result.corrected++;
-    } else {
-      EodReportValidationService.ok(validationRows, rowIndex);
+      return true;
     }
 
-    context.setValue(summaryColumns.carrierCode, rowIndex, match.carrierCode);
-    context.setValue(summaryColumns.customerState, rowIndex, match.customerState);
-    result.filled++;
+    return false;
+  },
+
+  getBNumberOwnerConfirmation_(context, rowIndex, dateKey) {
+    const palletConfig = CONFIG.eodReports.reports.palletAndProductByMembers;
+    const bNumber = context.value(palletConfig.summaryColumns.bNumber, rowIndex);
+    const lookup = PalletAndProductByMembersEodReportService.getLookupForDate(dateKey);
+
+    return PalletAndProductByMembersEodReportService.getUniqueOwnerForBNumber(
+      lookup,
+      bNumber
+    );
+  },
+
+  applyGuardedFieldCorrection_(context, validationRows, rowIndex, columnName, label, beforeValue, reportValue, validator, result) {
+    const reportConfig = this.reportConfig_();
+
+    if (validator(beforeValue)) {
+      return false;
+    }
+
+    if (!validator(reportValue)) {
+      EodReportValidationService.noMatch(
+        validationRows,
+        rowIndex,
+        `${reportConfig.displayName}: ${label} not corrected: report ${label} is blank or invalid.`
+      );
+      result.notFound++;
+      return false;
+    }
+
+    const afterValue = EodReportNormalisationService.normalizeStrictCode(reportValue);
+
+    context.setValue(columnName, rowIndex, afterValue);
+    EodReportValidationService.corrected(
+      validationRows,
+      rowIndex,
+      [
+        `${reportConfig.displayName}: corrected ${label}.`,
+        `Before: ${EodReportNormalisationService.displayValue(beforeValue)}`,
+        `After: ${EodReportNormalisationService.displayValue(afterValue)}`
+      ].join('\n')
+    );
+    result.corrected++;
+    return true;
   },
 
   getLookupForDate_(dateKey) {

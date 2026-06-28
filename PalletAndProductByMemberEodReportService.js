@@ -249,6 +249,55 @@ const PalletAndProductByMembersEodReportService = {
     return lookup;
   },
 
+  getLookupForDate(dateKey) {
+    return this.getLookupForDate_(dateKey);
+  },
+
+  getUniqueOwnerForBNumber(lookup, bNumber) {
+    if (!lookup) {
+      return {
+        status: 'missing',
+        owner: ''
+      };
+    }
+
+    const normalizedBNumber = EodReportNormalisationService.normalizeBNumber(bNumber);
+
+    if (!normalizedBNumber) {
+      return {
+        status: 'missing',
+        owner: ''
+      };
+    }
+
+    const matches = lookup.byBNumber[normalizedBNumber] || [];
+    const uniqueOwners = {};
+    const owners = [];
+
+    matches.forEach(match => {
+      const owner = EodReportNormalisationService.normalizeOwner(match.owner);
+
+      if (!owner || uniqueOwners[owner]) {
+        return;
+      }
+
+      uniqueOwners[owner] = true;
+      owners.push(owner);
+    });
+
+    if (owners.length === 1) {
+      return {
+        status: 'unique',
+        owner: owners[0]
+      };
+    }
+
+    return {
+      status: owners.length > 1 ? 'ambiguous' : 'missing',
+      owner: ''
+    };
+  },
+
   buildLookup_(report) {
     const columns = this.reportConfig_().columns;
 
