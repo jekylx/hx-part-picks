@@ -6,8 +6,8 @@
  * - setup() is manual / one-time.
  * - processPrinterEmails() must not run setup().
  * - Gmail labels are thread-level visibility markers only; they are not dedupe.
- * - The printer replies into the same daily Gmail thread, so processed/failed
- *   threads must remain searchable for later scans in that thread.
+ * - The Gmail search stays Inbox-only and does not exclude processed/failed
+ *   labels: later printer replies can return archived daily threads to Inbox.
  * - Batch PDFs are deduped by BATCH::<md5(original PDF bytes)> before split.
  * - Split pages are deduped by BATCH::<same hash>::PAGE-<pageNumber>.
  * - Gemini is optional: extraction failure must still create a blank review row.
@@ -176,6 +176,10 @@ function processThread_(thread) {
   if ((processedAnyPdf || skippedAnyDuplicate) && !anyCriticalFailure) {
     thread.addLabel(processedLabel);
     thread.markRead();
+    // Archive processed threads to keep Inbox clean. Processed labels are not
+    // excluded from search because later printer replies can return the daily
+    // thread to Inbox; batch/page dedupe handles already-seen PDFs/pages.
+    thread.moveToArchive();
   }
 }
 

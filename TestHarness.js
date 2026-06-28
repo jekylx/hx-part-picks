@@ -11,6 +11,7 @@
  * These tests DO:
  * - validate config
  * - validate Gmail query string
+ * - validate Gmail post-processing search policy
  * - validate prompt content
  * - validate raw row writing
  * - validate append-only summary behaviour
@@ -137,6 +138,8 @@ function testGmailQuery_() {
   assertContains_(query, 'filename:pdf', 'Gmail query missing PDF filter.');
   assertContains_(query, 'label:"Inbox"', 'Gmail query missing inbox label filter.');
   assertContains_(query, 'newer_than:7d', 'Gmail query missing search window.');
+  assertNotContains_(query, '-label:"PartPick/Processed"', 'Gmail query must not exclude processed threads.');
+  assertNotContains_(query, '-label:"PartPick/Failed"', 'Gmail query must not exclude failed threads.');
 }
 
 function testPromptRules_() {
@@ -597,6 +600,14 @@ function assertContains_(value, expectedSubstring, message) {
 
   if (text.indexOf(expectedSubstring) === -1) {
     throw new Error(`${message} Missing "${expectedSubstring}".`);
+  }
+}
+
+function assertNotContains_(value, unexpectedSubstring, message) {
+  const text = String(value || '');
+
+  if (text.indexOf(unexpectedSubstring) !== -1) {
+    throw new Error(`${message} Found "${unexpectedSubstring}".`);
   }
 }
 
