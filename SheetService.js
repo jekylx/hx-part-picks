@@ -16,7 +16,7 @@ const SheetService = {
       form[field.key] == null ? '' : form[field.key]
     );
 
-    sheet.appendRow([
+    const row = [
       ctx.processingKey,
       new Date(),
       ctx.message.getDate(),
@@ -25,7 +25,18 @@ const SheetService = {
       ctx.archiveFile ? ctx.archiveFile.getUrl() : '',
       ctx.extractionStatus || '',
       ...fieldValues
-    ]);
+    ];
+
+    const nextRow = sheet.getLastRow() + 1;
+    const rawFieldStartColumn = 8;
+
+    sheet
+      .getRange(nextRow, rawFieldStartColumn, 1, fieldValues.length)
+      .setNumberFormat('@');
+
+    sheet
+      .getRange(nextRow, 1, 1, row.length)
+      .setValues([row]);
   },
 
   getSheet_(name) {
