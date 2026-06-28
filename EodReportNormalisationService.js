@@ -34,6 +34,50 @@ const EodReportNormalisationService = {
     };
   },
 
+  parseOutstandingOrdersSearchCriteriaBNumber(value) {
+    const segments = String(value || '')
+      .split('&')
+      .map(segment => segment.trim())
+      .filter(segment => segment !== '');
+
+    const originalPalletSegments = segments.filter(segment =>
+      segment.toUpperCase().startsWith('O')
+    );
+
+    if (originalPalletSegments.length === 0) {
+      return {
+        status: 'missing',
+        bNumber: '',
+        rawValue: ''
+      };
+    }
+
+    if (originalPalletSegments.length > 1) {
+      return {
+        status: 'ambiguous',
+        bNumber: '',
+        rawValue: originalPalletSegments.join('&')
+      };
+    }
+
+    const rawValue = originalPalletSegments[0].slice(1).trim();
+    const bNumber = this.normalizeBNumber(rawValue);
+
+    if (!/^B\d{7}$/.test(bNumber)) {
+      return {
+        status: rawValue ? 'invalid' : 'missing',
+        bNumber: '',
+        rawValue
+      };
+    }
+
+    return {
+      status: 'ok',
+      bNumber,
+      rawValue
+    };
+  },
+
   normalizeOutstandingOrdersOrderNumber(value) {
     return this.parseOutstandingOrdersOrderNo(value).orderNumber;
   },
@@ -46,7 +90,7 @@ const EodReportNormalisationService = {
     return String(value || '')
       .toUpperCase()
       .replace(/\s+/g, '')
-      .replace(/[^A-Z]/g, '')
+      .replace(/[^A-Z0-9]/g, '')
       .slice(0, 5);
   },
 

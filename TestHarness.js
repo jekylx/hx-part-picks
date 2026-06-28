@@ -31,7 +31,9 @@ function runLocalTests() {
   runTest_('Gmail query is correct', testGmailQuery_, results);
   runTest_('Order number normalisation accepts variable length', testOrderNumberNormalisation_, results);
   runTest_('Outstanding Orders order parsing accepts variable length', testOutstandingOrdersOrderParsing_, results);
+  runTest_('Outstanding Orders Search Criteria B parsing works', testOutstandingOrdersSearchCriteriaBParsing_, results);
   runTest_('EOD member normalisation helper works', testEodMemberNormalisation_, results);
+  runTest_('EOD owner normalisation allows alphanumeric owners', testEodOwnerNormalisation_, results);
   runTest_('EOD carrier validation helper works', testEodCarrierValidation_, results);
   runTest_('EOD state validation helper works', testEodStateValidation_, results);
   runTest_('EOD customer name normalisation helper works', testEodCustomerNameNormalisation_, results);
@@ -43,6 +45,14 @@ function runLocalTests() {
   runTest_('Outstanding Orders customer correction requires B owner confirmation', testOutstandingOrdersCustomerOwnerGate_, results);
   runTest_('Outstanding Orders blocks customer correction without B owner confirmation', testOutstandingOrdersCustomerOwnerGateBlocks_, results);
   runTest_('Outstanding Orders guards carrier and state corrections', testOutstandingOrdersCarrierStateGuards_, results);
+  runTest_('Outstanding Orders groups by Order and Search Criteria B Number', testOutstandingOrdersGroupsByOrderAndBNumber_, results);
+  runTest_('Outstanding Orders summary row matches correct Order+B line', testOutstandingOrdersSummaryMatchesCorrectOrderBLine_, results);
+  runTest_('Outstanding Orders repeated same-B rows sum quantity', testOutstandingOrdersRepeatedSameBQty_, results);
+  runTest_('Outstanding Orders canonical identity avoids false ambiguity', testOutstandingOrdersCanonicalIdentityNotAmbiguous_, results);
+  runTest_('Outstanding Orders ambiguous same-B group blocks corrections', testOutstandingOrdersAmbiguousGroupBlocks_, results);
+  runTest_('Outstanding Orders canonical identity detects true ambiguity', testOutstandingOrdersCanonicalIdentityAmbiguous_, results);
+  runTest_('Outstanding Orders missing B match blocks corrections', testOutstandingOrdersMissingBMatchBlocks_, results);
+  runTest_('Outstanding Orders does not fill from another same-order line', testOutstandingOrdersDoesNotFillFromSameOrderOtherB_, results);
   runTest_('Pallet/Product exact C+B match sets Location', testPalletProductExactMatchSetsLocation_, results);
   runTest_('Pallet/Product exact C+B match fills Member', testPalletProductExactMatchFillsMember_, results);
   runTest_('Pallet/Product B owner match corrects C and Location', testPalletProductBMatchOwnerGateCorrects_, results);
@@ -277,8 +287,39 @@ function testOutstandingOrdersOrderParsing_() {
   assertEquals_('', parsed.orderNumber, 'Empty order after owner should be blank.');
 }
 
+function testOutstandingOrdersSearchCriteriaBParsing_() {
+  let parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V1990&OB1033381');
+
+  assertEquals_('ok', parsed.status, 'Valid Search Criteria should parse.');
+  assertEquals_('B1033381', parsed.bNumber, 'Original pallet segment should normalize to B Number.');
+
+  parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V2000&OB0933522');
+
+  assertEquals_('ok', parsed.status, 'Leading bottle-size BB must not be treated as B Number.');
+  assertEquals_('B0933522', parsed.bNumber, 'O segment should preserve leading zeroes after B.');
+
+  parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V1990');
+
+  assertEquals_('missing', parsed.status, 'Search Criteria without O segment should be missing.');
+  assertEquals_('', parsed.bNumber, 'Missing O segment should not return a B Number.');
+
+  parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber('BB&V1990&OB1033381&OB1033382');
+
+  assertEquals_('ambiguous', parsed.status, 'Multiple O segments should be ambiguous.');
+  assertEquals_('', parsed.bNumber, 'Ambiguous O segments should not return a B Number.');
+
+  ['BB&V1990&OABC', 'BB&V1990&O123456', 'BB&V1990&O'].forEach(searchCriteria => {
+    parsed = EodReportNormalisationService.parseOutstandingOrdersSearchCriteriaBNumber(searchCriteria);
+
+    assertTruthy_(
+      parsed.status === 'invalid' || parsed.status === 'missing',
+      `Invalid O segment should be invalid/missing: ${searchCriteria}`
+    );
+    assertEquals_('', parsed.bNumber, `Invalid O segment should not return a B Number: ${searchCriteria}`);
+  });
+}
+
 // Future normalisation fix phase:
-// - Owner should likely allow alphanumeric values consistently.
 // - Invalid B/C values currently fall back to original input through summary wrappers.
 // - Order OCR cleanup applies to the whole string, so surrounding O/Q/I/L text can add digits.
 // - Q label, numeric/count, and location fields do not currently have normalisers.
@@ -314,6 +355,26 @@ function testEodMemberNormalisation_() {
     '00123',
     EodReportNormalisationService.normalizeMember('00123'),
     'Numeric-looking member values should be preserved as strings.'
+  );
+}
+
+function testEodOwnerNormalisation_() {
+  assertEquals_(
+    'ABC12',
+    EodReportNormalisationService.normalizeOwner('ABC12'),
+    'Owner should preserve alphanumeric owner codes.'
+  );
+
+  assertEquals_(
+    'ABC12',
+    EodReportNormalisationService.normalizeOwner(' A-B C.1 2Z '),
+    'Owner should remove whitespace/punctuation and keep first five alphanumeric characters.'
+  );
+
+  assertEquals_(
+    '',
+    EodReportNormalisationService.normalizeOwner('---'),
+    'Owner with no alphanumeric characters should normalize blank.'
   );
 }
 
@@ -651,76 +712,424 @@ function testOutstandingOrdersCustomerOwnerGateBlocks_() {
 }
 
 function testOutstandingOrdersCarrierStateGuards_() {
-  let outcome = runOutstandingOrdersRowTest_({
-    customerName: 'Same Customer',
-    carrier: '',
-    state: '',
-    match: {
-      owner: 'ABCDE',
-      orderNumber: '123',
-      customerName: 'Same Customer',
-      carrierCode: 'AP',
-      customerState: 'SA'
+  const restore = stubPalletLookupForTest_({
+    byBNumber: {
+      B1234567: [
+        { owner: 'ABCDE' }
+      ]
     }
   });
 
-  assertEquals_('AP', outcome.context.values['Carrier'], 'Blank Carrier should be filled from valid report Carrier.');
-  assertEquals_('SA', outcome.context.values['State'], 'Blank State should be filled from valid report State.');
-
-  outcome = runOutstandingOrdersRowTest_({
-    customerName: 'Same Customer',
-    carrier: 'BAD',
-    state: 'BAD',
-    match: {
-      owner: 'ABCDE',
-      orderNumber: '123',
+  try {
+    let outcome = runOutstandingOrdersRowTest_({
       customerName: 'Same Customer',
-      carrierCode: 'AC',
-      customerState: 'QLD'
+      carrier: '',
+      state: '',
+      match: {
+        owner: 'ABCDE',
+        orderNumber: '123',
+        customerName: 'Same Customer',
+        carrierCode: 'AP',
+        customerState: 'SA'
+      }
+    });
+
+    assertEquals_('AP', outcome.context.values['Carrier'], 'Blank Carrier should be filled from valid report Carrier.');
+    assertEquals_('SA', outcome.context.values['State'], 'Blank State should be filled from valid report State.');
+
+    outcome = runOutstandingOrdersRowTest_({
+      customerName: 'Same Customer',
+      carrier: 'BAD',
+      state: 'BAD',
+      match: {
+        owner: 'ABCDE',
+        orderNumber: '123',
+        customerName: 'Same Customer',
+        carrierCode: 'AC',
+        customerState: 'QLD'
+      }
+    });
+
+    assertEquals_('AC', outcome.context.values['Carrier'], 'Invalid Carrier should be corrected from valid report Carrier.');
+    assertEquals_('QLD', outcome.context.values['State'], 'Invalid State should be corrected from valid report State.');
+
+    outcome = runOutstandingOrdersRowTest_({
+      customerName: 'Same Customer',
+      carrier: 'NXM',
+      state: 'SA',
+      match: {
+        owner: 'ABCDE',
+        orderNumber: '123',
+        customerName: 'Same Customer',
+        carrierCode: 'AP',
+        customerState: 'VIC'
+      }
+    });
+
+    assertEquals_('NXM', outcome.context.values['Carrier'], 'Existing valid Carrier should be preserved.');
+    assertEquals_('SA', outcome.context.values['State'], 'Existing valid State should be preserved.');
+
+    outcome = runOutstandingOrdersRowTest_({
+      customerName: 'Same Customer',
+      carrier: 'BAD',
+      state: 'BAD',
+      match: {
+        owner: 'ABCDE',
+        orderNumber: '123',
+        customerName: 'Same Customer',
+        carrierCode: 'AUSPOST',
+        customerState: 'BADSTATE'
+      }
+    });
+
+    assertEquals_('BAD', outcome.context.values['Carrier'], 'Invalid Carrier should stay unchanged when report Carrier is invalid.');
+    assertEquals_('BAD', outcome.context.values['State'], 'Invalid State should stay unchanged when report State is invalid.');
+
+    const notes = outcome.validationRows[0].notes.join('\n');
+
+    assertContains_(notes, 'Carrier not corrected', 'Invalid report Carrier should add a validation note.');
+    assertContains_(notes, 'State not corrected', 'Invalid report State should add a validation note.');
+    assertEquals_(2, outcome.result.blocked, 'Invalid report Carrier/State should count as blocked.');
+    assertEquals_(0, outcome.result.notFound, 'Invalid report Carrier/State should not count as not found.');
+  } finally {
+    restore();
+  }
+}
+
+function testOutstandingOrdersGroupsByOrderAndBNumber_() {
+  const lookup = OutstandingOrdersEodReportService.buildLookup_(
+    buildMockOutstandingOrdersReport_([
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'AQQFB1403534',
+        searchCriteria: 'BB&V1990&OB1033381',
+        qtyOrd: '1'
+      }),
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'AQQFB1403534',
+        searchCriteria: 'BB&V1990&OB1033387',
+        qtyOrd: '1'
+      }),
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'AQQFB1403534',
+        searchCriteria: 'BB&V1990&OB1033390',
+        qtyOrd: '2'
+      }),
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'AQQFB1403534',
+        searchCriteria: 'BB&V1990&OB1033393',
+        qtyOrd: '3'
+      }),
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'AQQFB1403534',
+        searchCriteria: 'BB&V1990&OABC',
+        qtyOrd: '4'
+      })
+    ])
+  );
+
+  const order = lookup.byOrderNumber['1403534'];
+
+  assertEquals_(11, order.orderTotalQtyOrd, 'Order total should include valid numeric Qty Ord even when Search Criteria B is invalid.');
+  assertEquals_(1, order.bNumbers.B1033381.qtyOrdSum, 'First B group quantity should be stored.');
+  assertEquals_(1, order.bNumbers.B1033387.qtyOrdSum, 'Second B group quantity should be stored.');
+  assertEquals_(2, order.bNumbers.B1033390.qtyOrdSum, 'Third B group quantity should be stored.');
+  assertEquals_(3, order.bNumbers.B1033393.qtyOrdSum, 'Fourth B group quantity should be stored.');
+  assertEquals_(
+    undefined,
+    order.bNumbers.OABC,
+    'Invalid Search Criteria B should not become a matchable B group.'
+  );
+}
+
+function testOutstandingOrdersSummaryMatchesCorrectOrderBLine_() {
+  const restore = stubPalletLookupForTest_({
+    byBNumber: {
+      B1033387: [
+        { owner: 'AQQFB' }
+      ]
     }
   });
 
-  assertEquals_('AC', outcome.context.values['Carrier'], 'Invalid Carrier should be corrected from valid report Carrier.');
-  assertEquals_('QLD', outcome.context.values['State'], 'Invalid State should be corrected from valid report State.');
+  try {
+    const context = buildMockOutstandingOrdersContext_({
+      'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
+      'Owner': '',
+      'Order No.': '1403534',
+      'Customer Name': 'Old Customer',
+      'Carrier': '',
+      'State': '',
+      'B Number': 'B1033387'
+    });
+    const validationRows = EodReportValidationService.create(1);
+    const result = OutstandingOrdersEodReportService.createResult_();
+    const lookup = OutstandingOrdersEodReportService.buildLookup_(
+      buildMockOutstandingOrdersReport_([
+        buildOutstandingOrdersCsvRow_({
+          orderNo: 'AQQFB1403534',
+          customerName: 'Wrong B Customer',
+          carrierCode: 'AP',
+          customerState: 'NSW',
+          searchCriteria: 'BB&V1990&OB1033381',
+          qtyOrd: '1'
+        }),
+        buildOutstandingOrdersCsvRow_({
+          orderNo: 'AQQFB1403534',
+          customerName: 'Right B Customer',
+          carrierCode: 'NXM',
+          customerState: 'VIC',
+          searchCriteria: 'BB&V1990&OB1033387',
+          qtyOrd: '1'
+        })
+      ])
+    );
 
-  outcome = runOutstandingOrdersRowTest_({
-    customerName: 'Same Customer',
-    carrier: 'NXM',
-    state: 'SA',
-    match: {
-      owner: 'ABCDE',
-      orderNumber: '123',
-      customerName: 'Same Customer',
-      carrierCode: 'AP',
-      customerState: 'VIC'
+    OutstandingOrdersEodReportService.applyRow_(
+      context,
+      validationRows,
+      0,
+      lookup,
+      '2026-05-01',
+      result
+    );
+
+    assertEquals_('AQQFB', context.values['Owner'], 'Matched Order+B line should write Owner.');
+    assertEquals_('Right B Customer', context.values['Customer Name'], 'Matched Order+B line should correct Customer Name.');
+    assertEquals_('NXM', context.values['Carrier'], 'Matched Order+B line should fill Carrier.');
+    assertEquals_('VIC', context.values['State'], 'Matched Order+B line should fill State.');
+  } finally {
+    restore();
+  }
+}
+
+function testOutstandingOrdersRepeatedSameBQty_() {
+  const rows = [1, 1, 2, 1].map(qtyOrd => buildOutstandingOrdersCsvRow_({
+    orderNo: 'AXXEW1403038',
+    searchCriteria: 'BB&V2000&OB0933522',
+    qtyOrd: String(qtyOrd)
+  }));
+  const lookup = OutstandingOrdersEodReportService.buildLookup_(
+    buildMockOutstandingOrdersReport_(rows)
+  );
+  const order = lookup.byOrderNumber['1403038'];
+  const group = lookup.byOrderNumberAndBNumber['1403038::B0933522'];
+
+  assertEquals_(5, order.orderTotalQtyOrd, 'Repeated same-B rows should sum to order total.');
+  assertEquals_(5, group.qtyOrdSum, 'Repeated same-B rows should sum to B group quantity.');
+  assertEquals_(false, group.ambiguous, 'Repeated identical same-B rows should not be ambiguous.');
+  assertEquals_(4, group.rows.length, 'Repeated same-B rows should be preserved on the group.');
+}
+
+function testOutstandingOrdersCanonicalIdentityNotAmbiguous_() {
+  const lookup = OutstandingOrdersEodReportService.buildLookup_(
+    buildMockOutstandingOrdersReport_([
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'ABCDE123',
+        customerName: 'Hung   Hoang',
+        carrierCode: 'ap',
+        customerState: ' vic ',
+        searchCriteria: 'BB&V1990&OB1234567',
+        qtyOrd: '1'
+      }),
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'ABCDE123',
+        customerName: 'HUNG HOANG',
+        carrierCode: 'AP',
+        customerState: 'VIC',
+        searchCriteria: 'BB&V1990&OB1234567',
+        qtyOrd: '1'
+      })
+    ])
+  );
+  const group = lookup.byOrderNumberAndBNumber['123::B1234567'];
+
+  assertEquals_(
+    false,
+    group.ambiguous,
+    'Same Order+B rows with canonical-equivalent customer/carrier/state should not be ambiguous.'
+  );
+}
+
+function testOutstandingOrdersAmbiguousGroupBlocks_() {
+  const lookup = OutstandingOrdersEodReportService.buildLookup_(
+    buildMockOutstandingOrdersReport_([
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'ABCDE123',
+        customerName: 'Customer One',
+        carrierCode: 'AP',
+        customerState: 'VIC',
+        searchCriteria: 'BB&V1990&OB1234567',
+        qtyOrd: '1'
+      }),
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'ABCDE123',
+        customerName: 'Customer Two',
+        carrierCode: 'NXM',
+        customerState: 'NSW',
+        searchCriteria: 'BB&V1990&OB1234567',
+        qtyOrd: '2'
+      })
+    ])
+  );
+  const builtGroup = lookup.byOrderNumberAndBNumber['123::B1234567'];
+
+  assertEquals_(true, builtGroup.ambiguous, 'Conflicting same Order+B identity fields should mark group ambiguous.');
+  assertContains_(
+    builtGroup.ambiguityReasons.join(','),
+    'customerName',
+    'Conflicting customerName should be recorded as an ambiguity reason.'
+  );
+  assertContains_(
+    builtGroup.ambiguityReasons.join(','),
+    'carrierCode',
+    'Conflicting carrierCode should be recorded as an ambiguity reason.'
+  );
+
+  const restore = stubPalletLookupForTest_({
+    byBNumber: {
+      B1234567: [
+        { owner: 'ABCDE' }
+      ]
     }
   });
 
-  assertEquals_('NXM', outcome.context.values['Carrier'], 'Existing valid Carrier should be preserved.');
-  assertEquals_('SA', outcome.context.values['State'], 'Existing valid State should be preserved.');
+  try {
+    const outcome = runOutstandingOrdersRowTest_({
+      customerName: 'Old Customer',
+      carrier: '',
+      state: '',
+      match: {
+        owner: 'ABCDE',
+        orderNumber: '123',
+        searchCriteriaBNumber: 'B1234567',
+        customerName: 'New Customer',
+        carrierCode: 'AP',
+        customerState: 'VIC',
+        ambiguous: true,
+        ambiguityReasons: ['customerName']
+      }
+    });
 
-  outcome = runOutstandingOrdersRowTest_({
-    customerName: 'Same Customer',
-    carrier: 'BAD',
-    state: 'BAD',
-    match: {
-      owner: 'ABCDE',
-      orderNumber: '123',
-      customerName: 'Same Customer',
-      carrierCode: 'AUSPOST',
-      customerState: 'BADSTATE'
+    assertEquals_('', outcome.context.values['Owner'], 'Ambiguous group should not write Owner.');
+    assertEquals_('Old Customer', outcome.context.values['Customer Name'], 'Ambiguous group should not correct Customer Name.');
+    assertEquals_('', outcome.context.values['Carrier'], 'Ambiguous group should not fill Carrier.');
+    assertEquals_('', outcome.context.values['State'], 'Ambiguous group should not fill State.');
+    assertContains_(
+      outcome.validationRows[0].notes.join('\n'),
+      'ambiguous Outstanding Orders lines',
+      'Ambiguous group should add a blocked note.'
+    );
+    assertEquals_(1, outcome.result.blocked, 'Ambiguous group should count as blocked.');
+    assertEquals_(0, outcome.result.notFound, 'Ambiguous group should not count as not found.');
+  } finally {
+    restore();
+  }
+}
+
+function testOutstandingOrdersCanonicalIdentityAmbiguous_() {
+  const lookup = OutstandingOrdersEodReportService.buildLookup_(
+    buildMockOutstandingOrdersReport_([
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'ABCDE123',
+        customerName: 'Hung Hoang',
+        carrierCode: 'AP',
+        customerState: 'VIC',
+        searchCriteria: 'BB&V1990&OB1234567',
+        qtyOrd: '1'
+      }),
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'ABCDE123',
+        customerName: 'Different Customer',
+        carrierCode: 'NXM',
+        customerState: 'NSW',
+        searchCriteria: 'BB&V1990&OB1234567',
+        qtyOrd: '1'
+      })
+    ])
+  );
+  const group = lookup.byOrderNumberAndBNumber['123::B1234567'];
+  const reasons = group.ambiguityReasons.join(',');
+
+  assertEquals_(true, group.ambiguous, 'Genuinely different normalized identity fields should be ambiguous.');
+  assertContains_(reasons, 'customerName', 'Different normalized customer should be an ambiguity reason.');
+  assertContains_(reasons, 'carrierCode', 'Different normalized carrier should be an ambiguity reason.');
+  assertContains_(reasons, 'customerState', 'Different normalized state should be an ambiguity reason.');
+}
+
+function testOutstandingOrdersMissingBMatchBlocks_() {
+  const restore = stubPalletLookupForTest_({
+    byBNumber: {
+      B7654321: [
+        { owner: 'ABCDE' }
+      ]
     }
   });
 
-  assertEquals_('BAD', outcome.context.values['Carrier'], 'Invalid Carrier should stay unchanged when report Carrier is invalid.');
-  assertEquals_('BAD', outcome.context.values['State'], 'Invalid State should stay unchanged when report State is invalid.');
+  try {
+    const outcome = runOutstandingOrdersRowTest_({
+      customerName: 'Old Customer',
+      carrier: '',
+      state: '',
+      bNumber: 'B7654321',
+      match: {
+        owner: 'ABCDE',
+        orderNumber: '123',
+        searchCriteriaBNumber: 'B1234567',
+        customerName: 'Other B Customer',
+        carrierCode: 'AP',
+        customerState: 'VIC'
+      }
+    });
 
-  const notes = outcome.validationRows[0].notes.join('\n');
+    assertEquals_('', outcome.context.values['Owner'], 'Missing B match should not write Owner.');
+    assertEquals_('Old Customer', outcome.context.values['Customer Name'], 'Missing B match should not correct Customer Name.');
+    assertEquals_('', outcome.context.values['Carrier'], 'Missing B match should not fill Carrier.');
+    assertEquals_('', outcome.context.values['State'], 'Missing B match should not fill State.');
+    assertContains_(
+      outcome.validationRows[0].notes.join('\n'),
+      'no Outstanding Orders line matched',
+      'Missing B match should add a blocked note.'
+    );
+    assertEquals_(1, outcome.result.blocked, 'Missing B match should count as blocked.');
+    assertEquals_(0, outcome.result.notFound, 'Missing B match should not count as not found.');
+  } finally {
+    restore();
+  }
+}
 
-  assertContains_(notes, 'Carrier not corrected', 'Invalid report Carrier should add a validation note.');
-  assertContains_(notes, 'State not corrected', 'Invalid report State should add a validation note.');
-  assertEquals_(2, outcome.result.blocked, 'Invalid report Carrier/State should count as blocked.');
-  assertEquals_(0, outcome.result.notFound, 'Invalid report Carrier/State should not count as not found.');
+function testOutstandingOrdersDoesNotFillFromSameOrderOtherB_() {
+  const restore = stubPalletLookupForTest_({
+    byBNumber: {
+      B1033387: [
+        { owner: 'AQQFB' }
+      ]
+    }
+  });
+
+  try {
+    const outcome = runOutstandingOrdersRowTest_({
+      customerName: 'Old Customer',
+      carrier: '',
+      state: '',
+      bNumber: 'B1033387',
+      match: {
+        owner: 'AQQFB',
+        orderNumber: '1403534',
+        searchCriteriaBNumber: 'B1033381',
+        customerName: 'Other Stock Line',
+        carrierCode: 'AP',
+        customerState: 'VIC'
+      }
+    });
+
+    assertEquals_('', outcome.context.values['Owner'], 'Same-order other B line should not write Owner.');
+    assertEquals_('Old Customer', outcome.context.values['Customer Name'], 'Same-order other B line should not correct Customer Name.');
+    assertEquals_('', outcome.context.values['Carrier'], 'Same-order other B line should not fill Carrier.');
+    assertEquals_('', outcome.context.values['State'], 'Same-order other B line should not fill State.');
+    assertEquals_(1, outcome.result.blocked, 'Same-order other B should count as blocked.');
+    assertEquals_(0, outcome.result.notFound, 'Same-order other B should not count as not found.');
+  } finally {
+    restore();
+  }
 }
 
 function testEodResultCountersIncludeBlocked_() {
@@ -1614,6 +2023,7 @@ function buildMockAppendContext_(processingKey) {
 
 function runOutstandingOrdersRowTest_(options) {
   const match = options.match;
+  const matchBNumber = match.searchCriteriaBNumber || options.bNumber || 'B1234567';
   const context = buildMockOutstandingOrdersContext_({
     'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
     'Owner': '',
@@ -1621,16 +2031,38 @@ function runOutstandingOrdersRowTest_(options) {
     'Customer Name': options.customerName,
     'Carrier': options.carrier,
     'State': options.state,
-    'B Number': options.bNumber || 'B1234567'
+    'B Number': options.bNumber || matchBNumber
   });
 
   const validationRows = EodReportValidationService.create(1);
   const result = OutstandingOrdersEodReportService.createResult_();
+  const group = {
+    orderNumber: match.orderNumber,
+    searchCriteriaBNumber: matchBNumber,
+    owner: match.owner || '',
+    customerName: match.customerName || '',
+    carrierCode: match.carrierCode || '',
+    customerState: match.customerState || '',
+    qtyOrdSum: match.qtyOrdSum || 0,
+    ambiguous: match.ambiguous || false,
+    ambiguityReasons: match.ambiguityReasons || [],
+    rows: match.rows || [match]
+  };
   const lookup = {
-    byOrderNumber: {}
+    byOrderNumber: {},
+    byOrderNumberAndBNumber: {}
+  };
+  const orderLookup = {
+    orderNumber: match.orderNumber,
+    orderTotalQtyOrd: group.qtyOrdSum,
+    bNumbers: {}
   };
 
-  lookup.byOrderNumber[match.orderNumber] = [match];
+  orderLookup.bNumbers[matchBNumber] = group;
+  lookup.byOrderNumber[match.orderNumber] = orderLookup;
+  lookup.byOrderNumberAndBNumber[
+    `${match.orderNumber}::${matchBNumber}`
+  ] = group;
 
   OutstandingOrdersEodReportService.applyRow_(
     context,
@@ -1646,6 +2078,34 @@ function runOutstandingOrdersRowTest_(options) {
     validationRows,
     result
   };
+}
+
+function buildMockOutstandingOrdersReport_(rows) {
+  return {
+    filename: 'RP_OUTSTANDING_ORDERS.csv',
+    dateKey: '2026-05-01',
+    headerRow: 3,
+    headers: [
+      'Order No.',
+      'Customer Name',
+      'Carrier Code',
+      'Customer State',
+      'Search Criteria',
+      'Qty Ord'
+    ],
+    rows
+  };
+}
+
+function buildOutstandingOrdersCsvRow_(row) {
+  return [
+    row.orderNo || 'ABCDE123',
+    row.customerName || 'Same Customer',
+    row.carrierCode || 'AP',
+    row.customerState || 'VIC',
+    row.searchCriteria || 'BB&V1990&OB1234567',
+    row.qtyOrd == null ? '' : row.qtyOrd
+  ];
 }
 
 function buildMockOutstandingOrdersContext_(values) {

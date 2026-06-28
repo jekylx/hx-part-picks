@@ -209,7 +209,9 @@ const CONFIG = {
           orderNo: 'Order No.',
           customerName: 'Customer Name',
           carrierCode: 'Carrier Code',
-          customerState: 'Customer State'
+          customerState: 'Customer State',
+          searchCriteria: 'Search Criteria',
+          qtyOrd: 'Qty Ord'
         },
 
         summaryColumns: {

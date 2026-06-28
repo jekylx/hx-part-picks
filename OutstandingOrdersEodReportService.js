@@ -31,16 +31,19 @@ const OutstandingOrdersEodReportService = {
   },
 
   applyRow_(context, validationRows, rowIndex, lookup, dateKey, result) {
-    // Outstanding Orders validates by order number and fills owner. Customer
-    // name needs B-owner confirmation before correction.
+    // Outstanding Orders can contain multiple stock lines for the same order.
+    // Only an Order+B group may fill owner/customer/carrier/state.
     const reportConfig = this.reportConfig_();
     const summaryColumns = reportConfig.summaryColumns;
+    const palletConfig = CONFIG.eodReports.reports.palletAndProductByMembers;
 
     const beforeOrderNumber = context.value(summaryColumns.orderNumber, rowIndex);
     const beforeCustomerName = context.value(summaryColumns.customerName, rowIndex);
     const beforeCarrier = context.value(summaryColumns.carrierCode, rowIndex);
     const beforeState = context.value(summaryColumns.customerState, rowIndex);
     const orderNumber = EodReportNormalisationService.normalizeSummaryOrderNumber(beforeOrderNumber);
+    const beforeBNumber = context.value(palletConfig.summaryColumns.bNumber, rowIndex);
+    const bNumber = EodReportNormalisationService.normalizeBNumber(beforeBNumber);
 
     if (!orderNumber) {
       EodReportValidationService.noMatch(
@@ -49,6 +52,16 @@ const OutstandingOrdersEodReportService = {
         `${reportConfig.displayName}: no order number to validate.`
       );
       result.notFound++;
+      return;
+    }
+
+    if (!/^B\d{7}$/.test(bNumber)) {
+      EodReportValidationService.noMatch(
+        validationRows,
+        rowIndex,
+        `${reportConfig.displayName}: correction blocked: no B Number to match against Outstanding Orders Search Criteria.`
+      );
+      result.blocked++;
       return;
     }
 
@@ -64,18 +77,55 @@ const OutstandingOrdersEodReportService = {
       return;
     }
 
-    const matches = lookup.byOrderNumber[orderNumber] || [];
-    const match = this.getUniqueMatch_(matches);
+    const matchKey = this.orderBNumberKey_(orderNumber, bNumber);
+    const match = lookup.byOrderNumberAndBNumber[matchKey];
 
     if (!match) {
       EodReportValidationService.noMatch(
         validationRows,
         rowIndex,
-        matches.length > 1
-          ? `${reportConfig.displayName}: multiple matches. Check order number.`
-          : `${reportConfig.displayName}: no match. Check parsed order number.`
+        [
+          `${reportConfig.displayName}: correction blocked: no Outstanding Orders line matched Order No. ${orderNumber} and B Number ${bNumber}.`,
+          'Order-only matches are not safe because one order can contain multiple stock lines.'
+        ].join('\n')
       );
-      result.notFound++;
+      result.blocked++;
+      return;
+    }
+
+    if (match.ambiguous) {
+      EodReportValidationService.noMatch(
+        validationRows,
+        rowIndex,
+        [
+          `${reportConfig.displayName}: correction blocked: ambiguous Outstanding Orders lines for Order No. ${orderNumber} and B Number ${bNumber}.`,
+          'Identity fields disagree within the matched stock line group.',
+          `Reasons: ${match.ambiguityReasons.join(', ')}`
+        ].join('\n')
+      );
+      result.blocked++;
+      return;
+    }
+
+    const ownerCheck = this.getBNumberOwnerConfirmation_(context, rowIndex, dateKey);
+
+    if (ownerCheck.status !== 'unique') {
+      EodReportValidationService.noMatch(
+        validationRows,
+        rowIndex,
+        `${reportConfig.displayName}: correction blocked: B Number owner could not confirm order owner.`
+      );
+      result.blocked++;
+      return;
+    }
+
+    if (ownerCheck.owner !== match.owner) {
+      EodReportValidationService.noMatch(
+        validationRows,
+        rowIndex,
+        `${reportConfig.displayName}: correction blocked: matched order owner ${match.owner || '(blank)'} does not match B Number owner ${ownerCheck.owner || '(blank)'}.`
+      );
+      result.blocked++;
       return;
     }
 
@@ -133,28 +183,6 @@ const OutstandingOrdersEodReportService = {
       EodReportNormalisationService.normalizeName(match.customerName) !==
         EodReportNormalisationService.normalizeName(beforeCustomerName)
     ) {
-      const ownerCheck = this.getBNumberOwnerConfirmation_(context, rowIndex, dateKey);
-
-      if (ownerCheck.status !== 'unique') {
-        EodReportValidationService.noMatch(
-          validationRows,
-          rowIndex,
-          `${reportConfig.displayName}: Customer Name not corrected: B Number owner could not confirm order owner.`
-        );
-        result.blocked++;
-        return false;
-      }
-
-      if (ownerCheck.owner !== match.owner) {
-        EodReportValidationService.noMatch(
-          validationRows,
-          rowIndex,
-          `${reportConfig.displayName}: Customer Name not corrected: order owner ${match.owner || '(blank)'} does not match B Number owner ${ownerCheck.owner || '(blank)'}.`
-        );
-        result.blocked++;
-        return false;
-      }
-
       context.setValue(summaryColumns.customerName, rowIndex, match.customerName);
       EodReportValidationService.corrected(
         validationRows,
@@ -257,10 +285,21 @@ const OutstandingOrdersEodReportService = {
       columns.customerState
     );
 
+    const searchCriteriaIndex = EodReportCsvService.getRequiredHeaderIndex_(
+      report.headers,
+      columns.searchCriteria
+    );
+
+    const qtyOrdIndex = EodReportCsvService.getRequiredHeaderIndex_(
+      report.headers,
+      columns.qtyOrd
+    );
+
     const lookup = {
       filename: report.filename,
       dateKey: report.dateKey,
-      byOrderNumber: {}
+      byOrderNumber: {},
+      byOrderNumberAndBNumber: {}
     };
 
     report.rows.forEach((row, index) => {
@@ -270,6 +309,16 @@ const OutstandingOrdersEodReportService = {
         return;
       }
 
+      const searchCriteria = String(row[searchCriteriaIndex] || '').trim();
+      const searchCriteriaBNumber = EodReportNormalisationService
+        .parseOutstandingOrdersSearchCriteriaBNumber(searchCriteria);
+      const qtyOrd = this.parseQtyOrd_(row[qtyOrdIndex]);
+      const orderLookup = this.ensureOrderLookup_(lookup, orderParts.orderNumber);
+
+      if (qtyOrd !== null) {
+        orderLookup.orderTotalQtyOrd += qtyOrd;
+      }
+
       const record = {
         reportRow: index + 1 + report.headerRow,
         owner: orderParts.owner,
@@ -277,45 +326,134 @@ const OutstandingOrdersEodReportService = {
         rawOrderNo: String(row[orderIndex] || '').trim(),
         customerName: String(row[customerNameIndex] || '').trim(),
         carrierCode: String(row[carrierCodeIndex] || '').trim(),
-        customerState: String(row[customerStateIndex] || '').trim()
+        customerState: String(row[customerStateIndex] || '').trim(),
+        searchCriteria,
+        searchCriteriaBNumber: searchCriteriaBNumber.bNumber,
+        searchCriteriaStatus: searchCriteriaBNumber.status,
+        qtyOrd
       };
 
-      EodReportNormalisationService.addLookupRecord(
-        lookup.byOrderNumber,
+      if (searchCriteriaBNumber.status !== 'ok') {
+        return;
+      }
+
+      const group = this.ensureBNumberGroup_(
+        lookup,
+        orderLookup,
         record.orderNumber,
-        record
+        record.searchCriteriaBNumber
       );
+
+      this.addRecordToGroup_(group, record);
     });
 
     return lookup;
   },
 
-  getUniqueMatch_(matches) {
-    if (!matches || matches.length === 0) {
+  ensureOrderLookup_(lookup, orderNumber) {
+    if (!lookup.byOrderNumber[orderNumber]) {
+      lookup.byOrderNumber[orderNumber] = {
+        orderNumber,
+        orderTotalQtyOrd: 0,
+        bNumbers: {}
+      };
+    }
+
+    return lookup.byOrderNumber[orderNumber];
+  },
+
+  ensureBNumberGroup_(lookup, orderLookup, orderNumber, bNumber) {
+    const key = this.orderBNumberKey_(orderNumber, bNumber);
+
+    if (!lookup.byOrderNumberAndBNumber[key]) {
+      lookup.byOrderNumberAndBNumber[key] = {
+        orderNumber,
+        searchCriteriaBNumber: bNumber,
+        owner: '',
+        customerName: '',
+        carrierCode: '',
+        customerState: '',
+        qtyOrdSum: 0,
+        ambiguous: false,
+        ambiguityReasons: [],
+        rows: []
+      };
+    }
+
+    orderLookup.bNumbers[bNumber] = lookup.byOrderNumberAndBNumber[key];
+
+    return lookup.byOrderNumberAndBNumber[key];
+  },
+
+  addRecordToGroup_(group, record) {
+    if (record.qtyOrd !== null) {
+      group.qtyOrdSum += record.qtyOrd;
+    }
+
+    const identityFields = [
+      'owner',
+      'customerName',
+      'carrierCode',
+      'customerState',
+      'searchCriteriaBNumber'
+    ];
+
+    if (group.rows.length === 0) {
+      identityFields.forEach(field => {
+        group[field] = record[field] || '';
+      });
+    } else {
+      identityFields.forEach(field => {
+        const before = this.canonicalIdentityValue_(field, group[field]);
+        const after = this.canonicalIdentityValue_(field, record[field]);
+
+        if (before !== after) {
+          group.ambiguous = true;
+
+          if (group.ambiguityReasons.indexOf(field) === -1) {
+            group.ambiguityReasons.push(field);
+          }
+        }
+      });
+    }
+
+    group.rows.push(record);
+  },
+
+  canonicalIdentityValue_(field, value) {
+    if (field === 'owner') {
+      return EodReportNormalisationService.normalizeOwner(value);
+    }
+
+    if (field === 'customerName') {
+      return EodReportNormalisationService.normalizeName(value);
+    }
+
+    if (field === 'carrierCode' || field === 'customerState') {
+      return EodReportNormalisationService.normalizeStrictCode(value);
+    }
+
+    return value || '';
+  },
+
+  parseQtyOrd_(value) {
+    if (value == null || value === '') {
       return null;
     }
 
-    const unique = {};
-    const records = [];
+    const cleaned = String(value).replace(/,/g, '').trim();
 
-    matches.forEach(match => {
-      const key = [
-        match.owner || '',
-        match.orderNumber || '',
-        match.customerName || '',
-        match.carrierCode || '',
-        match.customerState || ''
-      ].join('::');
+    if (!cleaned) {
+      return null;
+    }
 
-      if (unique[key]) {
-        return;
-      }
+    const numberValue = Number(cleaned);
 
-      unique[key] = true;
-      records.push(match);
-    });
+    return isFinite(numberValue) ? numberValue : null;
+  },
 
-    return records.length === 1 ? records[0] : null;
+  orderBNumberKey_(orderNumber, bNumber) {
+    return `${orderNumber}::${bNumber}`;
   },
 
   createResult_() {
