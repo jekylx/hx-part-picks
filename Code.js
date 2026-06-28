@@ -1,0 +1,257 @@
+/**
+ * Code.gs
+ * Main entry points.
+ *
+ * Critical rules:
+ * - setup() is manual / one-time.
+ * - processPrinterEmails() must not run setup().
+ * - Gemini is optional.
+ * - Gemini failure must not stop Drive save, sheet append, dedupe marking, or processed label.
+ * - Part Picks stores raw Gemini output.
+ * - A row is successful if the PDF is saved to Drive and a row is appended to the sheet.
+ * - Failure only means Drive save and/or sheet append failed.
+ */
+
+// function setup() {
+//   LabelService.setupLabels();
+//   SheetService.setupSheets();
+//   DriveService.setupFolders();
+//   SummaryService.appendMissingSummaryRows();
+//   SheetService.hideImplementationSheets();
+
+//   Logger.log('Setup complete. Add a time trigger for processPrinterEmails.');
+// }
+
+function processPrinterEmails() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const query = GmailService.buildSearchQuery();
+    const threads = GmailApp.search(query, 0, CONFIG.gmail.maxThreadsPerRun);
+
+    LogService.info(
+      'SEARCH',
+      '',
+      '',
+      `Found ${threads.length} thread(s): ${query}`
+    );
+
+    threads.forEach(thread => processThread_(thread));
+
+    SummaryService.appendMissingSummaryRows();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function processThread_(thread) {
+  const processedLabel = GmailApp.getUserLabelByName(CONFIG.gmail.processedLabel);
+  const failedLabel = GmailApp.getUserLabelByName(CONFIG.gmail.failedLabel);
+
+  let anyCriticalFailure = false;
+  let processedAnyPdf = false;
+  let skippedAnyDuplicate = false;
+
+  thread.getMessages().forEach(message => {
+    const batchPdfs = GmailService.getPdfAttachments(message);
+
+    batchPdfs.forEach(batchPdf => {
+      const pagePdfs = splitPdfOrFallbackToBatch_(batchPdf, message);
+
+      pagePdfs.forEach(pagePdf => {
+        const processingKey = buildPageProcessingKey_(batchPdf, pagePdf);
+
+        if (DedupeService.hasProcessed(processingKey)) {
+          skippedAnyDuplicate = true;
+
+          LogService.info(
+            'SKIPPED_DUPLICATE',
+            message.getId(),
+            pagePdf.filename,
+            processingKey
+          );
+
+          return;
+        }
+
+        let archiveFile = null;
+
+        try {
+          archiveFile = DriveService.archivePdf(pagePdf.blob, message);
+
+          const extractionResult = extractFormOrBlank_(pagePdf.blob, message, pagePdf);
+
+          SheetService.appendPartPickRow({
+            message,
+            pdf: pagePdf.blob,
+            archiveFile,
+            form: extractionResult.form,
+            processingKey,
+            extractionStatus: extractionResult.extractionStatus,
+            extractionError: extractionResult.extractionError
+          });
+
+          DedupeService.markProcessed(
+            processingKey,
+            message,
+            batchPdf,
+            archiveFile,
+            extractionResult.extractionStatus === 'AUTO_EXTRACTED' ? 1 : 0
+          );
+
+          LogService.info(
+            'PROCESSED',
+            message.getId(),
+            pagePdf.filename,
+            [
+              'Drive saved and sheet row appended.',
+              `Extraction status: ${extractionResult.extractionStatus}`,
+              `Rotation applied: ${pagePdf.rotationApplied || 0}`
+            ].join(' ')
+          );
+
+          processedAnyPdf = true;
+        } catch (err) {
+          anyCriticalFailure = true;
+
+          LogService.error(
+            'FAILED_DRIVE_OR_SHEET',
+            message.getId(),
+            pagePdf.filename,
+            err,
+            archiveFile ? archiveFile.getUrl() : ''
+          );
+        }
+      });
+    });
+  });
+
+  if (anyCriticalFailure) {
+    thread.addLabel(failedLabel);
+  }
+
+  if ((processedAnyPdf || skippedAnyDuplicate) && !anyCriticalFailure) {
+    thread.addLabel(processedLabel);
+    thread.markRead();
+  }
+}
+
+function splitPdfOrFallbackToBatch_(batchPdf, message) {
+  try {
+    const pagePdfs = PdfService.splitIntoPortraitPages(batchPdf);
+
+    LogService.info(
+      'SPLIT_BATCH_PDF',
+      message.getId(),
+      batchPdf.getName(),
+      `Split into ${pagePdfs.length} one-page PDF(s).`
+    );
+
+    return pagePdfs;
+  } catch (err) {
+    const errorText = stringifyError_(err);
+
+    LogService.error(
+      'PDF_SPLIT_FAILED_NON_FATAL',
+      message.getId(),
+      batchPdf.getName(),
+      err,
+      ''
+    );
+
+    return [
+      {
+        pageNumber: 1,
+        filename: batchPdf.getName(),
+        blob: batchPdf,
+        rotationApplied: 0,
+        extractionStatus: 'PDF_SPLIT_FAILED',
+        extractionError: errorText
+      }
+    ];
+  }
+}
+
+function extractFormOrBlank_(pagePdfBlob, message, pagePdf) {
+  if (pagePdf.extractionStatus === 'PDF_SPLIT_FAILED') {
+    return {
+      form: buildBlankForm_('PDF split failed. Original batch PDF was saved instead.'),
+      extractionStatus: 'PDF_SPLIT_FAILED',
+      extractionError: pagePdf.extractionError || ''
+    };
+  }
+
+  try {
+    const extraction = GeminiService.extractPdf(pagePdfBlob);
+    const forms = GeminiService.normalizeForms(extraction);
+
+    if (!forms.length) {
+      throw new Error('Gemini returned no forms for one-page PDF.');
+    }
+
+    if (forms.length > 1) {
+      LogService.info(
+        'MULTIPLE_FORMS_RETURNED_FOR_ONE_PAGE',
+        message.getId(),
+        pagePdf.filename,
+        `Gemini returned ${forms.length} forms for one-page PDF. Using the first form only.`
+      );
+    }
+
+    return {
+      form: forms[0],
+      extractionStatus: 'AUTO_EXTRACTED',
+      extractionError: ''
+    };
+  } catch (err) {
+    const errorText = stringifyError_(err);
+
+    LogService.error(
+      'GEMINI_FAILED_NON_FATAL',
+      message.getId(),
+      pagePdf.filename,
+      err,
+      ''
+    );
+
+    return {
+      form: buildBlankForm_('Gemini extraction failed. Manual entry required.'),
+      extractionStatus: 'GEMINI_FAILED',
+      extractionError: errorText
+    };
+  }
+}
+
+function buildBlankForm_(reason) {
+  const form = {};
+
+  CONFIG.fields.forEach(field => {
+    form[field.key] = null;
+  });
+
+  form.needs_review = true;
+  form.review_reasons = [reason || 'Manual entry required.'];
+
+  return form;
+}
+
+function buildPageProcessingKey_(batchPdf, pagePdf) {
+  const batchHash = Utils.md5Hex(batchPdf.getBytes());
+
+  return [
+    'BATCH',
+    batchHash,
+    `PAGE-${pagePdf.pageNumber}`
+  ].join('::');
+}
+
+function stringifyError_(err) {
+  if (!err) return '';
+
+  if (err.stack) {
+    return String(err.stack);
+  }
+
+  return String(err);
+}

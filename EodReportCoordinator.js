@@ -1,0 +1,77 @@
+const EodReportCoordinator = {
+  applyToSummaryRows(sheet, startRow, rowCount) {
+    try {
+      this.applyToSummaryRows_(sheet, startRow, rowCount);
+    } catch (err) {
+      this.logError_('EOD_REPORT_LOOKUP_FAILED', '', err);
+    }
+  },
+
+  applyToSummaryRows_(sheet, startRow, rowCount) {
+    if (!sheet || rowCount <= 0) {
+      return;
+    }
+
+    const context = EodReportSummaryContextService.create(
+      sheet,
+      startRow,
+      rowCount
+    );
+
+    const validationRows = EodReportValidationService.create(rowCount);
+
+    const outstandingOrdersResult = OutstandingOrdersEodReportService
+      .applyToSummaryRows(context, validationRows);
+
+    const palletResult = PalletAndProductByMembersEodReportService
+      .applyToSummaryRows(context, validationRows);
+
+    EodReportValidationService.write(context, validationRows);
+    context.write();
+
+    this.logInfo_(
+      'EOD_REPORT_LOOKUP_APPLIED',
+      '',
+      [
+        `Summary rows: ${startRow}-${startRow + rowCount - 1}`,
+        this.formatResult_('PALLET AND PRODUCT BY MEMBERS', palletResult),
+        this.formatResult_('OUTSTANDING ORDERS', outstandingOrdersResult)
+      ].join(' | ')
+    );
+  },
+
+  formatResult_(name, result) {
+    return [
+      name,
+      `checked=${result.checked}`,
+      `filled=${result.filled}`,
+      `corrected=${result.corrected}`,
+      result.mismatched == null ? '' : `mismatched=${result.mismatched}`,
+      `notFound=${result.notFound}`
+    ].filter(Boolean).join(' ');
+  },
+
+  logInfo_(status, filename, details) {
+    if (
+      typeof LogService !== 'undefined' &&
+      typeof LogService.info === 'function'
+    ) {
+      LogService.info(status, '', filename || '', details || '');
+      return;
+    }
+
+    Logger.log(`${status}: ${filename || ''} ${details || ''}`);
+  },
+
+  logError_(status, filename, err) {
+    if (
+      typeof LogService !== 'undefined' &&
+      typeof LogService.error === 'function'
+    ) {
+      LogService.error(status, '', filename || '', err, '');
+      return;
+    }
+
+    Logger.log(`${status}: ${err && err.stack ? err.stack : String(err)}`);
+  }
+};
