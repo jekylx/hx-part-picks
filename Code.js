@@ -57,7 +57,23 @@ function processThread_(thread) {
     const batchPdfs = GmailService.getPdfAttachments(message);
 
     batchPdfs.forEach(batchPdf => {
+      const batchProcessingKey = buildBatchProcessingKey_(batchPdf);
+
+      if (DedupeService.hasProcessed(batchProcessingKey)) {
+        skippedAnyDuplicate = true;
+
+        LogService.info(
+          'SKIPPED_DUPLICATE_BATCH',
+          message.getId(),
+          batchPdf.getName(),
+          batchProcessingKey
+        );
+
+        return;
+      }
+
       const pagePdfs = splitPdfOrFallbackToBatch_(batchPdf, message);
+      let allPagesAccountedFor = true;
 
       pagePdfs.forEach(pagePdf => {
         const processingKey = buildPageProcessingKey_(batchPdf, pagePdf);
@@ -114,6 +130,7 @@ function processThread_(thread) {
           processedAnyPdf = true;
         } catch (err) {
           anyCriticalFailure = true;
+          allPagesAccountedFor = false;
 
           LogService.error(
             'FAILED_DRIVE_OR_SHEET',
@@ -124,6 +141,16 @@ function processThread_(thread) {
           );
         }
       });
+
+      if (allPagesAccountedFor) {
+        DedupeService.markProcessed(
+          batchProcessingKey,
+          message,
+          batchPdf,
+          null,
+          0
+        );
+      }
     });
   });
 
@@ -237,13 +264,45 @@ function buildBlankForm_(reason) {
 }
 
 function buildPageProcessingKey_(batchPdf, pagePdf) {
-  const batchHash = Utils.md5Hex(batchPdf.getBytes());
-
   return [
-    'BATCH',
-    batchHash,
+    buildBatchProcessingKey_(batchPdf),
     `PAGE-${pagePdf.pageNumber}`
   ].join('::');
+}
+
+function buildBatchProcessingKey_(batchPdf) {
+  return [
+    'BATCH',
+    Utils.md5Hex(batchPdf.getBytes())
+  ].join('::');
+}
+
+function buildBatchPageDedupeStatus_(batchPdf, pagePdfs, processedKeys) {
+  const normalizedProcessedKeys = {};
+
+  (processedKeys || []).forEach(key => {
+    const normalizedKey = String(key || '').trim();
+
+    if (normalizedKey) {
+      normalizedProcessedKeys[normalizedKey] = true;
+    }
+  });
+
+  const batchProcessingKey = buildBatchProcessingKey_(batchPdf);
+
+  return {
+    batchProcessingKey,
+    skipBatchBeforeSplit: !!normalizedProcessedKeys[batchProcessingKey],
+    pages: (pagePdfs || []).map(pagePdf => {
+      const processingKey = buildPageProcessingKey_(batchPdf, pagePdf);
+
+      return {
+        pageNumber: pagePdf.pageNumber,
+        processingKey,
+        skipPageAfterSplit: !!normalizedProcessedKeys[processingKey]
+      };
+    })
+  };
 }
 
 function stringifyError_(err) {
