@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Environment and local secrets
+.env
+.env.*
+*.local
+local.*
+secrets.*
+credentials.*
+
+# clasp local auth/cache
+.clasprc.json
+.clasprc.*.json
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+*.tmp
+*.bak
+*.orig
+
