@@ -31,7 +31,13 @@ function runLocalTests() {
   runTest_('Gmail query is correct', testGmailQuery_, results);
   runTest_('Order number normalisation accepts variable length', testOrderNumberNormalisation_, results);
   runTest_('Outstanding Orders order parsing accepts variable length', testOutstandingOrdersOrderParsing_, results);
-  runTest_('EOD strict carrier/state validation helpers work', testEodStrictValidationHelpers_, results);
+  runTest_('EOD member normalisation helper works', testEodMemberNormalisation_, results);
+  runTest_('EOD carrier validation helper works', testEodCarrierValidation_, results);
+  runTest_('EOD state validation helper works', testEodStateValidation_, results);
+  runTest_('EOD customer name normalisation helper works', testEodCustomerNameNormalisation_, results);
+  runTest_('EOD report header normalisation helper works', testEodReportHeaderNormalisation_, results);
+  runTest_('EOD date helpers work', testEodDateHelpers_, results);
+  runTest_('EOD lookup key helpers work', testEodLookupKeyHelpers_, results);
   runTest_('EOD result counters include blocked', testEodResultCountersIncludeBlocked_, results);
   runTest_('EOD result formatting includes blocked', testEodResultFormattingIncludesBlocked_, results);
   runTest_('Outstanding Orders customer correction requires B owner confirmation', testOutstandingOrdersCustomerOwnerGate_, results);
@@ -163,9 +169,9 @@ function testGmailQuery_() {
 
 function testOrderNumberNormalisation_() {
   assertEquals_(
-    '1400385',
-    NormalisationService.normalizeOrderNumber_('140O385'),
-    'Order number should apply OCR-safe digit cleanup.'
+    '1234567',
+    NormalisationService.normalizeOrderNumber_('1234567'),
+    'Normal seven digit order number should stay unchanged.'
   );
 
   assertEquals_(
@@ -181,6 +187,36 @@ function testOrderNumberNormalisation_() {
   );
 
   assertEquals_(
+    '1400385',
+    NormalisationService.normalizeOrderNumber_('140O385'),
+    'Order number should normalize OCR O to zero.'
+  );
+
+  assertEquals_(
+    '1400385',
+    NormalisationService.normalizeOrderNumber_('14QQ385'),
+    'Order number should normalize OCR Q to zero.'
+  );
+
+  assertEquals_(
+    '1112345',
+    NormalisationService.normalizeOrderNumber_('1IL2345'),
+    'Order number should normalize OCR I/L to one.'
+  );
+
+  assertEquals_(
+    '1234567',
+    NormalisationService.normalizeOrderNumber_('123-45/67'),
+    'Order number should remove separators.'
+  );
+
+  assertEquals_(
+    '1234567',
+    NormalisationService.normalizeOrderNumber_('Ref 1234567'),
+    'Order number should keep only digits from OCR-safe mixed text.'
+  );
+
+  assertEquals_(
     null,
     NormalisationService.normalizeOrderNumber_(''),
     'Blank order number should be invalid.'
@@ -191,10 +227,21 @@ function testOrderNumberNormalisation_() {
     NormalisationService.normalizeOrderNumber_('ABC'),
     'Order number with no digits should be invalid.'
   );
+
+  assertEquals_(
+    '0012345',
+    NormalisationService.normalizeOrderNumber_('0012345'),
+    'Order number should preserve leading zeros.'
+  );
 }
 
 function testOutstandingOrdersOrderParsing_() {
-  let parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('ABC121234567');
+  let parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('ABCDE1234567');
+
+  assertEquals_('ABCDE', parsed.owner, 'Owner should be first five alphanumeric characters.');
+  assertEquals_('1234567', parsed.orderNumber, 'Order number should be everything after owner.');
+
+  parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('ABC121234567');
 
   assertEquals_('ABC12', parsed.owner, 'Owner with digits should remain valid.');
   assertEquals_('1234567', parsed.orderNumber, 'Seven digit order should parse.');
@@ -209,13 +256,68 @@ function testOutstandingOrdersOrderParsing_() {
   assertEquals_('ABCDE', parsed.owner, 'Long order owner should parse.');
   assertEquals_('1234567890', parsed.orderNumber, 'Long order should parse.');
 
+  parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('abcde123');
+
+  assertEquals_('ABCDE', parsed.owner, 'Lowercase owner should be uppercased.');
+  assertEquals_('123', parsed.orderNumber, 'Lowercase input order should parse.');
+
+  parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('AB-C D/E 123');
+
+  assertEquals_('ABCDE', parsed.owner, 'Separators should be removed before owner parsing.');
+  assertEquals_('123', parsed.orderNumber, 'Separators should be removed before order parsing.');
+
   parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('AB12');
 
   assertEquals_('', parsed.owner, 'Short owner should be invalid.');
   assertEquals_('', parsed.orderNumber, 'Short value should have no order after owner.');
+
+  parsed = EodReportNormalisationService.parseOutstandingOrdersOrderNo('ABCDE');
+
+  assertEquals_('ABCDE', parsed.owner, 'Five character owner should remain valid.');
+  assertEquals_('', parsed.orderNumber, 'Empty order after owner should be blank.');
 }
 
-function testEodStrictValidationHelpers_() {
+// Future normalisation fix phase:
+// - Owner should likely allow alphanumeric values consistently.
+// - Invalid B/C values currently fall back to original input through summary wrappers.
+// - Order OCR cleanup applies to the whole string, so surrounding O/Q/I/L text can add digits.
+// - Q label, numeric/count, and location fields do not currently have normalisers.
+// - Null dates currently parse via JavaScript Date semantics instead of being rejected.
+// Do not lock those behaviours in here until the desired policy is agreed.
+
+function testEodMemberNormalisation_() {
+  assertEquals_(
+    'ABC123',
+    EodReportNormalisationService.normalizeMember('abc123'),
+    'Member should uppercase alphanumeric values.'
+  );
+
+  assertEquals_(
+    'ABC',
+    EodReportNormalisationService.normalizeMember(' A B\tC\n'),
+    'Member should remove spaces, tabs, and newlines.'
+  );
+
+  assertEquals_(
+    'AB-12.',
+    EodReportNormalisationService.normalizeMember('ab-12.'),
+    'Member should preserve punctuation.'
+  );
+
+  assertEquals_(
+    '',
+    EodReportNormalisationService.normalizeMember(''),
+    'Blank member should stay blank.'
+  );
+
+  assertEquals_(
+    '00123',
+    EodReportNormalisationService.normalizeMember('00123'),
+    'Numeric-looking member values should be preserved as strings.'
+  );
+}
+
+function testEodCarrierValidation_() {
   assertEquals_(
     'AP',
     EodReportNormalisationService.normalizeStrictCode(' ap '),
@@ -229,14 +331,23 @@ function testEodStrictValidationHelpers_() {
     );
   });
 
-  ['AUSPOST', 'AUSTRALIA POST', 'NEXDAY', ''].forEach(carrier => {
+  ['nxm', ' ap ', ' ac '].forEach(carrier => {
+    assertTruthy_(
+      EodReportNormalisationService.isValidCarrier(carrier),
+      `Trimmed/lowercase carrier should be valid: ${carrier}`
+    );
+  });
+
+  ['AUSPOST', 'AUSTRALIA POST', 'NEXDAY', '', 'BAD'].forEach(carrier => {
     assertEquals_(
       false,
       EodReportNormalisationService.isValidCarrier(carrier),
       `Carrier should be invalid: ${carrier}`
     );
   });
+}
 
+function testEodStateValidation_() {
   ['NSW', 'VIC', 'ACT', 'WA', 'TAS', 'NT', 'QLD', 'SA'].forEach(state => {
     assertTruthy_(
       EodReportNormalisationService.isValidState(state),
@@ -244,13 +355,146 @@ function testEodStrictValidationHelpers_() {
     );
   });
 
-  ['AUS', 'NZ', ''].forEach(state => {
+  ['nsw', ' vic ', ' qld '].forEach(state => {
+    assertTruthy_(
+      EodReportNormalisationService.isValidState(state),
+      `Trimmed/lowercase state should be valid: ${state}`
+    );
+  });
+
+  ['Victoria', 'AUS', 'NZ', '', 'BAD'].forEach(state => {
     assertEquals_(
       false,
       EodReportNormalisationService.isValidState(state),
       `State should be invalid: ${state}`
     );
   });
+}
+
+function testEodCustomerNameNormalisation_() {
+  assertEquals_(
+    'andrew viner',
+    EodReportNormalisationService.normalizeName('ANDREW VINER'),
+    'Customer name should normalize to lowercase.'
+  );
+
+  assertEquals_(
+    'andrew viner',
+    EodReportNormalisationService.normalizeName('  Andrew   Viner  '),
+    'Customer name should trim and collapse whitespace.'
+  );
+
+  assertEquals_(
+    "o'neil-smith",
+    EodReportNormalisationService.normalizeName("O'Neil-Smith"),
+    'Customer name should preserve apostrophes and hyphens.'
+  );
+
+  assertEquals_(
+    'acme, pty. ltd.',
+    EodReportNormalisationService.normalizeName('ACME, PTY. LTD.'),
+    'Customer name should preserve punctuation.'
+  );
+
+  assertEquals_(
+    '',
+    EodReportNormalisationService.normalizeName(''),
+    'Blank customer name should stay blank.'
+  );
+
+  assertEquals_(
+    EodReportNormalisationService.normalizeName('Andrew  Viner'),
+    EodReportNormalisationService.normalizeName(' andrew viner '),
+    'Customer name comparison should ignore case and spacing.'
+  );
+}
+
+function testEodReportHeaderNormalisation_() {
+  assertEquals_(
+    'order no.',
+    EodReportNormalisationService.normalizeHeader('\uFEFFOrder No.'),
+    'Report header should strip BOM.'
+  );
+
+  assertEquals_(
+    'customer name',
+    EodReportNormalisationService.normalizeHeader('  Customer Name  '),
+    'Report header should trim and lowercase.'
+  );
+
+  assertEquals_(
+    'customer state',
+    EodReportNormalisationService.normalizeHeader('Customer    State'),
+    'Report header should collapse repeated whitespace.'
+  );
+
+  assertEquals_(
+    'carrier code',
+    EodReportNormalisationService.normalizeHeader('Carrier\t\nCode'),
+    'Report header should collapse tabs and newlines.'
+  );
+}
+
+function testEodDateHelpers_() {
+  const date = new Date('2026-05-01T09:30:00+10:00');
+
+  assertEquals_(
+    date,
+    EodReportNormalisationService.toDate(date),
+    'Valid Date object should be returned as-is.'
+  );
+
+  assertEquals_(
+    null,
+    EodReportNormalisationService.toDate(''),
+    'Blank date should be invalid.'
+  );
+
+  assertEquals_(
+    null,
+    EodReportNormalisationService.toDate('not a date'),
+    'Invalid date string should be rejected.'
+  );
+
+  assertTruthy_(
+    EodReportNormalisationService.toDate('2026-05-01') instanceof Date,
+    'Supported string date should parse to a Date.'
+  );
+}
+
+function testEodLookupKeyHelpers_() {
+  assertEquals_(
+    'C1234567::B7654321',
+    EodReportNormalisationService.pairKey('C1234567', 'B7654321'),
+    'Pair key should use C::B format.'
+  );
+
+  assertEquals_(
+    'B7654321::ABCDE',
+    EodReportNormalisationService.bOwnerKey('B7654321', 'abcde'),
+    'B owner key should use B::OWNER format with normalized owner.'
+  );
+
+  assertEquals_(
+    '::B7654321',
+    EodReportNormalisationService.pairKey('', 'B7654321'),
+    'Pair key should document blank C part behaviour.'
+  );
+
+  assertEquals_(
+    'B7654321::',
+    EodReportNormalisationService.bOwnerKey('B7654321', ''),
+    'B owner key should document blank owner part behaviour.'
+  );
+
+  const cNumber = EodReportNormalisationService.normalizeCNumber(' c-123 4567 ');
+  const bNumber = EodReportNormalisationService.normalizeBNumber(' b-765 4321 ');
+
+  assertEquals_(
+    'C1234567::B7654321',
+    EodReportNormalisationService.pairKey(cNumber, bNumber),
+    'Normalized C/B inputs should produce stable pair keys.'
+  );
 }
 
 function testOutstandingOrdersCustomerOwnerGate_() {
