@@ -25,6 +25,7 @@ clasp push
 - Do not normalize raw extraction output written to `Part Picks`.
 - Do not remove sheet protections casually; internal sheets are protected by default and `Part Pick Summary` is the only normal editable sheet.
 - Do not overwrite existing summary rows.
+- Do not treat `setup()` as a wipe/reset; it creates or updates project assets and must preserve existing data.
 - Do not use `Refresh EOD` as a reprocessing path for Gmail, PDFs, Gemini, archive, labels, dedupe keys, or raw `Part Picks`.
 - Do not use `Send Email` as a reprocessing path for Gmail, PDFs, Gemini, archive, labels, dedupe keys, or raw `Part Picks`.
 - Do not clear email sent/blocked status casually; verify whether an email was sent before allowing retry.
@@ -41,6 +42,12 @@ clasp push
 - For documentation-only changes, `node --check *.js` can be run as a repo sanity check.
 
 ## Business Logic Summary
+
+Setup rules:
+
+- `setup()` is manual only and must never be called by `processPrinterEmails()`.
+- `setup()` creates or updates Gmail labels, sheets, Drive folders, missing summary rows, internal sheet protections, and hidden implementation sheets.
+- `setup()` is not a wipe/reset and must not clear existing data.
 
 Raw extraction prompt rules:
 
@@ -62,12 +69,23 @@ Batch/page dedupe rules:
 Summary append rules:
 
 - `Part Picks` is raw ingestion.
-- `Part Pick Summary` is append-only by processing key.
+- `Part Pick Summary` is append-only by hidden `_Key`.
+- Existing summary rows and manual edits are not overwritten.
+- Missing summary rows append after the last real `_Key` in column A, not after `getLastRow()`, so checkbox/data-validation/formatted rows cannot push appends to row 1001.
+- `repairAppendMissingSummaryRows()` only syncs existing raw `Part Picks` rows into Summary and does not call Gmail/PDF/Gemini/Drive archive/dedupe/email.
 - Manual and formula columns are not script-owned.
 - EOD enrichment applies after new rows are appended.
 - `Refresh EOD` is a manual checkbox on existing summary rows. It reruns EOD checks for that row only and must not append rows or call ingestion services.
 - `Send Email` is a manual checkbox on existing summary rows. It sends the current summary row details and original Drive PDF attachment to `jesse.lang.04@gmail.com`, then records durable email status and leaves the checkbox checked.
 - Email duplicate prevention uses `Email Sent At` and `Email Status`, not checkbox state alone. Blocking statuses require admin review/reset before retry.
+
+Processor reliability rules:
+
+- `processPrinterEmails()` keeps a script lock and must never call `setup()`.
+- The Gmail query is Inbox-only and intentionally does not exclude processed/failed labels.
+- Each Gmail thread is processed independently; unexpected failure in one thread is logged and does not prevent the final summary append.
+- Missing Gemini/API tokens may not throw if no fresh PDF reaches Gemini or if Gemini failure is caught as non-fatal.
+- Gemini extraction failure creates a blank review row instead of crashing the whole run.
 
 EOD report enrichment rules:
 

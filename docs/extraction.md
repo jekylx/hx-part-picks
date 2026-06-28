@@ -59,6 +59,6 @@ Important fields include `order_number`, `original_location`, `b_code`, `carton_
 
 `Part Picks` stores raw Gemini output as plain text so leading zeroes and uncertain human input are preserved.
 
-`Part Pick Summary` is derived later. Summary values may be normalized by `NormalisationService` for display and matching. EOD enrichment then applies controlled corrections and validation notes.
+`Part Pick Summary` is derived later and is append-only by hidden `_Key`, copied from raw `Processing Key`. Existing summary rows and manual edits are not overwritten. Summary values may be normalized by `NormalisationService` for display and matching. EOD enrichment then applies controlled corrections and validation notes.
 
 Do not move normalization into the Gemini prompt or raw row append path.

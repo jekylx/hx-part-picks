@@ -2,7 +2,7 @@
 
 ## Apps Script Tests
 
-Run `runLocalTests()` inside Apps Script after an approved `clasp push`.
+Run `runLocalTests()` inside Apps Script after an approved `clasp push`. The current expected result is 72 passing tests.
 
 The test harness:
 
@@ -11,6 +11,7 @@ The test harness:
 - Validates raw extraction prompt rules.
 - Validates raw row append behavior.
 - Validates append-only summary behavior.
+- Validates `_Key`-based Summary row placement so test harness rows and production sync do not use `getLastRow()+1`.
 - Validates the `Refresh EOD` checkbox config, edit filtering, trigger duplicate helper, and one-row coordinator refresh routing.
 - Validates the `Send Email` checkbox config, edit filtering, duplicate-send guards, validation failures, subject/body composition, PDF attachment handling, and blocked send failures with stubbed mail/Drive services.
 - Validates batch/page processing key stability.
@@ -21,6 +22,7 @@ The test harness:
 
 The tests do not read real printer emails or call Gemini extraction.
 The summary email tests do not send real emails and do not read real Drive files; they stub the mail sender and Drive file lookup.
+`cleanupTestRows()` removes `TEST::` rows from `Part Picks`, `Part Pick Summary`, and `_Processed Keys` even when a test row was accidentally created far down the sheet.
 
 ## Adding Tests
 
@@ -67,6 +69,12 @@ git -c safe.directory=C:/path/to/hx-part-picks diff --check
 - Local checks cannot exercise GmailApp, DriveApp, SpreadsheetApp, UrlFetchApp, LockService, PropertiesService, or Logger behavior.
 - `runLocalTests()` must run in the bound Apps Script project.
 - Production functions can touch Gmail, Sheets, Drive, and external services; do not run them without explicit approval.
+
+## Test Helpers
+
+`testAppendMockRow()` appends only a raw `Part Picks` row. To sync that raw row into `Part Pick Summary`, run `repairAppendMissingSummaryRows()`.
+
+Summary test helpers must use the same `_Key`-based append placement as production code. Do not use `getLastRow()+1` for Summary rows, because checkbox/data-validation/formatted rows can inflate the physical last row.
 
 ## Manual Smoke Test After Deployment
 

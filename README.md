@@ -28,6 +28,8 @@ The Apps Script project is bound to a Google Sheet and uses these manifest scope
 - `https://www.googleapis.com/auth/drive`
 - `https://www.googleapis.com/auth/gmail.modify`
 - `https://www.googleapis.com/auth/script.external_request`
+- `https://www.googleapis.com/auth/script.scriptapp`
+- `https://www.googleapis.com/auth/userinfo.email`
 - `https://www.googleapis.com/auth/script.send_mail`
 
 External requests are made to Gemini and the PDF splitter service.
@@ -59,7 +61,7 @@ Do not commit these values.
    ```powershell
    clasp push
    ```
-8. Run `setup()` manually once from Apps Script. `setup()` creates labels, sheets, folders, summary rows, protects and hides implementation sheets, and leaves `Part Pick Summary` editable.
+8. Run `setup()` manually from Apps Script when setup/schema/folder maintenance is needed. `setup()` creates or updates labels, sheets, folders, missing summary rows, internal sheet protections, and hidden implementation sheets. It is not a wipe/reset and does not clear existing data.
 9. Create a time-driven trigger for `processPrinterEmails()`.
 10. Run `installSummaryRefreshTrigger()` once to create the installable edit trigger for `handleSummaryRefreshEdit(e)`.
 
@@ -97,25 +99,32 @@ This repo has no `package.json` and no local test runner. Apps Script tests run 
 ## Troubleshooting
 
 - No emails found: check the Gmail query built by `GmailService.buildSearchQuery()`. It searches subject, PDF attachments, `label:"Inbox"`, and `newer_than:7d`. It does not currently filter by sender because `CONFIG.gmail.from` is commented out.
+- Processor appears to do nothing: check logs for the Gmail query, found thread count, skipped duplicate batch/page messages, unexpected thread-level failures, and `SummaryService.appendMissingSummaryRows` append stats.
 - Duplicate PDFs skipped: check `_Processed Keys` for `BATCH::<hash>` or `BATCH::<hash>::PAGE-<pageNumber>`. Labels are visibility only; dedupe keys decide processing.
 - Gemini failure: extraction failure is non-fatal. The PDF is archived and a blank review row is appended with `GEMINI_FAILED`.
 - PDF splitter failure: splitter failure is non-fatal. The original batch PDF is archived and a blank review row is appended with `PDF_SPLIT_FAILED`.
+- Summary appends near row 1001: check for old deployed code still using `getLastRow()+1`, stale `TEST::` keys or real `_Key` values far down column A, and whether Apps Script was updated with an approved `clasp push`.
+- Repair helper skips rows: `skippedExistingKey` means the raw `Processing Key` is already present as Summary `_Key`; `rawProcessingKeyHeaderFound=false` means the raw `Part Picks` header does not match the expected `Processing Key` header.
 - Missing EOD reports: EOD reports are searched separately by sender, subject, attachment filename, and date. Missing reports produce validation notes and log entries.
 - EOD header mismatch: required headers are matched after trimming, lowercasing, BOM stripping, and whitespace collapse. Missing required columns throw an EOD lookup error.
 - Validation colours: green means OK or corrected, yellow means no match/blocked, red means mismatch.
 - Manual EOD refresh: correct values directly on a `Part Pick Summary` row, then check that row's `Refresh EOD` checkbox. The installable edit trigger reruns EOD checks for that row only and resets the checkbox.
-- Send summary email: review/correct an existing `Part Pick Summary` row, then check `Send Email`. The installable edit trigger sends one plain-text email with the row details and original PDF attached to `jesse.lang.04@gmail.com`, records sent status, leaves the checkbox checked, and best-effort locks the sent email cells.
+- Send summary email: review/correct an existing `Part Pick Summary` row, then check `Send Email`. The installable edit trigger sends one plain-text email with row details, spreadsheet link, PDF Drive link, validation/status note when available, and original PDF attached to `CONFIG.summaryEmail.recipient` (`jesse.lang.04@gmail.com`). The subject is `HX Part Pick: <Member or (blank member)> - <Order No. or (blank order)>`. On success it records `Email Sent At`, `Email Sent To`, `Email Status = SENT`, leaves the checkbox checked, and best-effort locks the sent email metadata cells.
 - Email duplicate prevention: `Email Sent At` and `Email Status` are durable row-level guards. Rows marked `SENT`, `SENDING`, `SEND_FAILED_BLOCKED`, `UNKNOWN`, or another nonblank blocking status do not send automatically again.
-- Email failure reset: an admin must verify whether an email was sent before clearing `Email Sent At`, `Email Sent To`, `Email Status`, `Email Error`, removing any sent email cell protections, and retrying.
+- Email validation/send failures: validation failures reset `Send Email` and write `VALIDATION_FAILED`. Send exceptions after reservation reset `Send Email` and write `SEND_FAILED_BLOCKED`. An admin must verify whether an email was sent before clearing `Email Sent At`, `Email Sent To`, `Email Status`, `Email Error`, removing any sent email cell protections, and retrying.
+- Missing Gemini/API tokens: missing script properties may not throw during a run if no fresh PDF reaches Gemini or if Gemini failure is caught as non-fatal and converted into a review row.
 - Apps Script timeout: reduce `CONFIG.gmail.maxThreadsPerRun`, rerun later, and rely on batch/page dedupe for partial retries.
 
 ## Safety Rules
 
 - `setup()` is manual only.
 - `processPrinterEmails()` must not run `setup()`.
+- `setup()` is maintenance, not a reset; it must not wipe or clear existing `Part Picks`, `Part Pick Summary`, or `_Processed Keys` data.
 - `Part Picks` stores raw Gemini output and must not be normalized.
-- Internal implementation sheets are protected by setup; `Part Pick Summary` is the normal editable sheet for users.
-- Summary append is append-only and must not overwrite existing rows.
+- Internal implementation sheets are protected and hidden by `setup()`; `Part Pick Summary` is the normal editable sheet for users.
+- Summary append is append-only by hidden `_Key` and must not overwrite existing rows or manual edits.
+- Missing summary rows append after the last real `_Key` in column A, not after `getLastRow()`, so checkbox/data-validation/formatted rows cannot push appends down to row 1001.
+- `repairAppendMissingSummaryRows()` only syncs existing raw `Part Picks` rows into `Part Pick Summary`; it does not call Gmail, PDF splitting, Gemini, Drive archive, dedupe, or email.
 - `Refresh EOD` only reruns EOD checks on an existing summary row. It must not reprocess Gmail, PDFs, Gemini extraction, Drive archive, labels, dedupe keys, or raw `Part Picks` rows.
 - `Send Email` only sends the existing summary row and attached archived PDF. It must not reprocess Gmail, PDFs, Gemini extraction, Drive archive, labels, dedupe keys, or raw `Part Picks` rows.
 - Gmail thread labels are visibility only; processed-key dedupe controls reprocessing.
