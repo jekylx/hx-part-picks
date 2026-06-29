@@ -39,6 +39,7 @@ clasp push
 - Run `git diff --check`.
 - After an approved `clasp push`, run `runLocalTests()` in Apps Script.
 - After deploying `Refresh EOD` changes, run `installSummaryRefreshTrigger()` once if the installable edit trigger is not already present.
+- After deploying EOD cache warmup changes, run `installDailyEodCacheWarmupTrigger()` once if the optional 5am warmup trigger is not already present.
 - For documentation-only changes, `node --check *.js` can be run as a repo sanity check.
 
 ## Business Logic Summary
@@ -76,8 +77,8 @@ Summary append rules:
 - Manual and formula columns are not script-owned.
 - EOD enrichment applies after new rows are appended.
 - `Refresh EOD` is a manual checkbox on existing summary rows. It reruns EOD checks for that row only and must not append rows or call ingestion services.
-- `Send Email` is a manual checkbox on existing summary rows. It sends the current summary row details and original Drive PDF attachment to `jesse.lang.04@gmail.com`, then records durable email status and leaves the checkbox checked.
-- Email duplicate prevention uses `Email Sent At` and `Email Status`, not checkbox state alone. Blocking statuses require admin review/reset before retry.
+- `Send Email` is a manual checkbox on existing summary rows. It sends the current summary row details and original Drive PDF attachment to `jesse.lang.04@gmail.com`, then records durable status in `_Summary Email Ledger` and leaves the checkbox checked.
+- Email duplicate prevention uses `_Summary Email Ledger`, not checkbox state alone. Blocking statuses require admin review/reset before retry.
 
 Processor reliability rules:
 
@@ -91,6 +92,14 @@ EOD report enrichment rules:
 
 - EOD reports are Gmail CSV attachments from `donotreply@paperlesswms.com.au`.
 - Reports are matched to the summary row's scanned date.
+- EOD reports use a per-execution runtime cache for any requested date.
+- `_EOD Report Cache` is current-day metadata only; report row data belongs in the row-based `_EOD Outstanding Orders Cache` and `_EOD Pallet Product Cache` sheets.
+- Historical/random date requests should not read or populate persistent cache sheets.
+- Pallet/Product by Member persistent cache stores the full report with no filtering.
+- Outstanding Orders persistent cache and lookup use only rows where `Order Type` normalizes exactly to `OL`.
+- `warmTodayEodReportCache()` warms only today's Outstanding Orders OL rows and full Pallet/Product report and must not touch Summary/raw/Gemini/printer Gmail/Drive/dedupe/email paths.
+- `installDailyEodCacheWarmupTrigger()` is separate from `installSummaryRefreshTrigger()`.
+- `setup()` creates/protects the cache sheet and `processPrinterEmails()` must not call `setup()`.
 - Missing reports or headers should surface through logs and validation notes.
 
 Validation colours:
@@ -113,7 +122,7 @@ Outstanding Orders crosscheck:
 Pallet/Product B-owner gate:
 
 - Exact C+B match can set Location.
-- B evidence can correct C and Location only when B ownership is unique and matches summary Owner.
+- B evidence can correct C and Location only when B ownership confirms the summary/order Owner.
 - C cannot correct a trusted B Number.
 - C-only evidence does not set Location.
 - Member is filled only from a unique B+Owner match.

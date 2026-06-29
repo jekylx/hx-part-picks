@@ -8,6 +8,8 @@ const SheetService = {
     this.setupLog_(ss);
     this.setupProcessed_(ss);
     this.setupConfiguration_(ss);
+    this.setupSummaryEmailLedger_(ss);
+    this.setupEodReportCache_(ss);
   },
 
   appendPartPickRow(ctx) {
@@ -166,6 +168,80 @@ const SheetService = {
         sheet.hideSheet();
       }
     });
+  },
+
+  setupSummaryEmailLedger_(ss) {
+    const sheet =
+      ss.getSheetByName(CONFIG.sheets.summaryEmailLedgerSheetName) ||
+      ss.insertSheet(CONFIG.sheets.summaryEmailLedgerSheetName);
+
+    this.ensureHeaders_(sheet, [
+      'Send Key',
+      'Summary Key',
+      'Recipient',
+      'PDF File ID',
+      'Status',
+      'Reserved At',
+      'Sent At',
+      'Updated At',
+      'Error',
+      'Subject'
+    ]);
+  },
+
+  setupEodReportCache_(ss) {
+    const sheet =
+      ss.getSheetByName(CONFIG.sheets.eodReportCacheSheetName) ||
+      ss.insertSheet(CONFIG.sheets.eodReportCacheSheetName);
+
+    this.ensureHeaders_(sheet, [
+      'Cache Key',
+      'Report Key',
+      'Date Key',
+      'Source Message ID',
+      'Source Filename',
+      'Source Date',
+      'Cached At',
+      'Header Row',
+      'Headers JSON',
+      'Row Count',
+      'Status',
+      'Error'
+    ]);
+
+    this.setupEodReportRowCache_(
+      ss,
+      CONFIG.sheets.eodOutstandingOrdersCacheSheetName,
+      CONFIG.eodReports.reports.outstandingOrders
+    );
+
+    this.setupEodReportRowCache_(
+      ss,
+      CONFIG.sheets.eodPalletProductCacheSheetName,
+      CONFIG.eodReports.reports.palletAndProductByMembers
+    );
+  },
+
+  setupEodReportRowCache_(ss, sheetName, reportConfig) {
+    const sheet =
+      ss.getSheetByName(sheetName) ||
+      ss.insertSheet(sheetName);
+
+    const reportHeaders = Object.keys(reportConfig.columns || {}).map(key =>
+      reportConfig.columns[key]
+    );
+
+    this.ensureHeaders_(sheet, [
+      'Cache Key',
+      'Report Key',
+      'Date Key',
+      'Source Message ID',
+      'Source Filename',
+      'Source Date',
+      'Cached At',
+      'Report Row',
+      ...reportHeaders
+    ]);
   },
 
   protectImplementationSheets() {

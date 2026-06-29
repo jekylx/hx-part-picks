@@ -121,7 +121,11 @@ const CONFIG = {
     extractedSheetName: 'Part Picks',
     logSheetName: 'Processing Log',
     processedSheetName: '_Processed Keys',
-    configSheetName: 'Configuration'
+    configSheetName: 'Configuration',
+    summaryEmailLedgerSheetName: '_Summary Email Ledger',
+    eodReportCacheSheetName: '_EOD Report Cache',
+    eodOutstandingOrdersCacheSheetName: '_EOD Outstanding Orders Cache',
+    eodPalletProductCacheSheetName: '_EOD Pallet Product Cache'
   },
 
   pdf: {
@@ -149,10 +153,6 @@ const CONFIG = {
       { header: 'Date Completed', manual: true, type: 'date' },
       { header: 'SLA', type: 'sla' },
       { header: 'Refresh EOD', manual: true, type: 'checkbox' },
-      { header: 'Email Sent At', manual: true, type: 'datetime' },
-      { header: 'Email Sent To', manual: true, type: 'text' },
-      { header: 'Email Status', manual: true, type: 'text' },
-      { header: 'Email Error', manual: true, type: 'text' },
       { header: 'Send Email', manual: true, type: 'checkbox' },
     ],
   },
@@ -221,7 +221,8 @@ const CONFIG = {
           carrierCode: 'Carrier Code',
           customerState: 'Customer State',
           searchCriteria: 'Search Criteria',
-          qtyOrd: 'Qty Ord'
+          qtyOrd: 'Qty Ord',
+          orderType: 'Order Type'
         },
 
         summaryColumns: {

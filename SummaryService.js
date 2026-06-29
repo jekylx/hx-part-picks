@@ -146,6 +146,7 @@ const SummaryService = {
 
     sheet.setFrozenRows(headerRow);
     sheet.hideColumns(1);
+    this.hideOperationalEmailColumns_(sheet);
   },
 
   getConfiguredSummaryHeaders_() {
@@ -294,6 +295,8 @@ const SummaryService = {
       Logger.log(err);
     }
 
+    this.hideOperationalEmailColumns_(sheet);
+
     sheet
       .getRange(headerRow, 1, 1, headers.length)
       .setFontWeight('bold');
@@ -357,6 +360,36 @@ const SummaryService = {
     sheet
       .getRange(startRow, completedCol, rowCount, 1)
       .setDataValidation(rule);
+  },
+
+  hideOperationalEmailColumns_(sheet) {
+    const staleHeaders = {
+      'Email Sent At': true,
+      'Email Sent To': true,
+      'Email Status': true,
+      'Email Error': true
+    };
+    const headers = this.getSheetHeaders_(sheet);
+    const configuredSendEmailColumn =
+      this.getConfiguredSummaryHeaders_().indexOf('Send Email') + 1;
+
+    headers.forEach((header, index) => {
+      const text = String(header || '').trim();
+      const column = index + 1;
+      const isStaleOperationalColumn = !!staleHeaders[text];
+      const isDuplicateSendEmailColumn =
+        text === 'Send Email' && column !== configuredSendEmailColumn;
+
+      if (!isStaleOperationalColumn && !isDuplicateSendEmailColumn) {
+        return;
+      }
+
+      try {
+        sheet.hideColumns(column);
+      } catch (err) {
+        Logger.log(`Could not hide stale summary email column ${header}: ${err}`);
+      }
+    });
   },
 
   applyCheckboxValidations_(sheet, headers) {

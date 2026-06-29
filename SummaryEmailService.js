@@ -9,6 +9,7 @@ const SummaryEmailService = {
   mailSenderForTest_: null,
   driveFileGetterForTest_: null,
   spreadsheetUrlForTest_: null,
+  ledgerForTest_: null,
 
   sendSummaryRowFromEdit(e, lock) {
     try {
@@ -23,16 +24,19 @@ const SummaryEmailService = {
     this.validateTarget_(sheet, rowNumber);
 
     const context = this.createRowContext_(sheet, rowNumber);
+    const sendKey = this.buildSendKey_(context);
+    const existingEntry = this.getLedgerEntry_(sendKey);
 
-    if (this.hasSentMarker_(context)) {
+    if (existingEntry && existingEntry.status === this.STATUS_SENT) {
       this.setValue_(context, 'Send Email', true);
+      this.protectSentEmailCells_(context);
       return {
         status: 'already_sent'
       };
     }
 
-    if (this.isDuplicateBlockingStatus_(context.value('Email Status'))) {
-      this.setValue_(context, 'Send Email', true);
+    if (existingEntry && this.isDuplicateBlockingStatus_(existingEntry.status)) {
+      this.setValue_(context, 'Send Email', false);
       return {
         status: 'blocked'
       };
@@ -43,24 +47,38 @@ const SummaryEmailService = {
     try {
       email = this.buildEmail_(context);
     } catch (err) {
-      this.writeValidationFailure_(context, err);
+      this.writeLedgerEntry_(sendKey, context, {
+        status: this.STATUS_VALIDATION_FAILED,
+        error: this.stringifyError_(err)
+      });
+      this.setValue_(context, 'Send Email', false);
       return {
         status: 'validation_failed',
         error: this.stringifyError_(err)
       };
     }
 
-    this.setValue_(context, 'Email Status', this.STATUS_SENDING);
-    this.setValue_(context, 'Email Error', '');
+    this.writeLedgerEntry_(sendKey, context, {
+      status: this.STATUS_SENDING,
+      reservedAt: new Date(),
+      recipient: email.to,
+      pdfFileId: email.pdfFileId,
+      subject: email.subject,
+      error: ''
+    });
     SpreadsheetApp.flush();
 
     try {
       this.sendMail_(email);
 
-      this.setValue_(context, 'Email Sent At', new Date());
-      this.setValue_(context, 'Email Sent To', email.to);
-      this.setValue_(context, 'Email Status', this.STATUS_SENT);
-      this.setValue_(context, 'Email Error', '');
+      this.writeLedgerEntry_(sendKey, context, {
+        status: this.STATUS_SENT,
+        sentAt: new Date(),
+        recipient: email.to,
+        pdfFileId: email.pdfFileId,
+        subject: email.subject,
+        error: ''
+      });
       this.setValue_(context, 'Send Email', true);
 
       this.protectSentEmailCells_(context);
@@ -70,8 +88,13 @@ const SummaryEmailService = {
         subject: email.subject
       };
     } catch (err) {
-      this.setValue_(context, 'Email Status', this.STATUS_SEND_FAILED_BLOCKED);
-      this.setValue_(context, 'Email Error', this.stringifyError_(err));
+      this.writeLedgerEntry_(sendKey, context, {
+        status: this.STATUS_SEND_FAILED_BLOCKED,
+        recipient: email.to,
+        pdfFileId: email.pdfFileId,
+        subject: email.subject,
+        error: this.stringifyError_(err)
+      });
       this.setValue_(context, 'Send Email', false);
 
       return {
@@ -79,6 +102,23 @@ const SummaryEmailService = {
         error: this.stringifyError_(err)
       };
     }
+  },
+
+  buildSendKey_(context) {
+    const summaryKey = String(context.value('_Key') || '').trim();
+    const recipient = this.getRecipient_();
+    const pdfUrl = this.extractPdfUrl_(context.range('PDF'));
+    const pdfFileId = this.extractDriveFileId_(pdfUrl);
+
+    if (!summaryKey) {
+      throw new Error('Summary _Key is missing; cannot build durable email send key.');
+    }
+
+    return [
+      summaryKey,
+      recipient,
+      pdfFileId || 'NO_PDF'
+    ].join('::');
   },
 
   validateTarget_(sheet, rowNumber) {
@@ -149,14 +189,6 @@ const SummaryEmailService = {
     return headers.indexOf(headerName) + 1;
   },
 
-  hasSentMarker_(context) {
-    if (context.value('Email Sent At')) {
-      return true;
-    }
-
-    return this.normalizeStatus_(context.value('Email Status')) === this.STATUS_SENT;
-  },
-
   isDuplicateBlockingStatus_(status) {
     const normalized = this.normalizeStatus_(status);
 
@@ -177,7 +209,8 @@ const SummaryEmailService = {
       to: recipient,
       subject,
       body,
-      attachments: [pdf.blob]
+      attachments: [pdf.blob],
+      pdfFileId: pdf.fileId
     };
   },
 
@@ -224,10 +257,6 @@ const SummaryEmailService = {
       'B Number',
       'Date Completed',
       'SLA',
-      'Email Sent At',
-      'Email Sent To',
-      'Email Status',
-      'Email Error'
     ];
     const lines = [
       'HX Part Pick',
@@ -408,14 +437,110 @@ const SummaryEmailService = {
     return '';
   },
 
-  writeValidationFailure_(context, err) {
-    this.setValue_(context, 'Email Status', this.STATUS_VALIDATION_FAILED);
-    this.setValue_(context, 'Email Error', this.stringifyError_(err));
-    this.setValue_(context, 'Send Email', false);
-  },
-
   setValue_(context, headerName, value) {
     context.range(headerName).setValue(value);
+  },
+
+  getLedgerEntry_(sendKey) {
+    if (this.ledgerForTest_) {
+      return this.ledgerForTest_[sendKey] || null;
+    }
+
+    const sheet = this.getLedgerSheet_();
+    const rowNumber = this.findLedgerRow_(sheet, sendKey);
+
+    if (rowNumber <= 0) {
+      return null;
+    }
+
+    const row = sheet.getRange(rowNumber, 1, 1, 10).getValues()[0];
+
+    return {
+      sendKey: row[0],
+      summaryKey: row[1],
+      recipient: row[2],
+      pdfFileId: row[3],
+      status: this.normalizeStatus_(row[4]),
+      reservedAt: row[5],
+      sentAt: row[6],
+      updatedAt: row[7],
+      error: row[8],
+      subject: row[9]
+    };
+  },
+
+  writeLedgerEntry_(sendKey, context, entry) {
+    const summaryKey = String(context.value('_Key') || '').trim();
+    const existing = this.getLedgerEntry_(sendKey) || {};
+    const merged = Object.assign({}, existing, entry || {});
+    const row = [
+      sendKey,
+      summaryKey,
+      merged.recipient || existing.recipient || this.getRecipient_(),
+      merged.pdfFileId || existing.pdfFileId || '',
+      this.normalizeStatus_(merged.status),
+      merged.reservedAt || existing.reservedAt || '',
+      merged.sentAt || existing.sentAt || '',
+      new Date(),
+      merged.error || '',
+      merged.subject || existing.subject || ''
+    ];
+
+    if (this.ledgerForTest_) {
+      this.ledgerForTest_[sendKey] = {
+        sendKey: row[0],
+        summaryKey: row[1],
+        recipient: row[2],
+        pdfFileId: row[3],
+        status: row[4],
+        reservedAt: row[5],
+        sentAt: row[6],
+        updatedAt: row[7],
+        error: row[8],
+        subject: row[9]
+      };
+      return;
+    }
+
+    const sheet = this.getLedgerSheet_();
+    const rowNumber = this.findLedgerRow_(sheet, sendKey);
+
+    if (rowNumber > 0) {
+      sheet.getRange(rowNumber, 1, 1, row.length).setValues([row]);
+      return;
+    }
+
+    sheet.appendRow(row);
+  },
+
+  getLedgerSheet_() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheetName = CONFIG.sheets.summaryEmailLedgerSheetName;
+    const sheet = ss && ss.getSheetByName(sheetName);
+
+    if (!sheet) {
+      throw new Error(`Summary email ledger sheet is missing: ${sheetName}. Run setup() before sending summary email.`);
+    }
+
+    return sheet;
+  },
+
+  findLedgerRow_(sheet, sendKey) {
+    if (!sheet || sheet.getLastRow() < 2) {
+      return 0;
+    }
+
+    const values = sheet
+      .getRange(2, 1, sheet.getLastRow() - 1, 1)
+      .getValues();
+
+    for (let index = 0; index < values.length; index++) {
+      if (String(values[index][0] || '') === sendKey) {
+        return index + 2;
+      }
+    }
+
+    return 0;
   },
 
   sendMail_(email) {
@@ -447,10 +572,15 @@ const SummaryEmailService = {
     this.spreadsheetUrlForTest_ = url;
   },
 
+  setLedgerForTest_(ledger) {
+    this.ledgerForTest_ = ledger;
+  },
+
   resetTestDoubles_() {
     this.mailSenderForTest_ = null;
     this.driveFileGetterForTest_ = null;
     this.spreadsheetUrlForTest_ = null;
+    this.ledgerForTest_ = null;
   },
 
   getDriveFileById_(fileId) {
@@ -471,11 +601,7 @@ const SummaryEmailService = {
 
   protectSentEmailCells_(context) {
     [
-      'Send Email',
-      'Email Sent At',
-      'Email Sent To',
-      'Email Status',
-      'Email Error'
+      'Send Email'
     ].forEach(headerName => {
       try {
         const range = context.range(headerName);

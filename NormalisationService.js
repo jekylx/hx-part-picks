@@ -9,7 +9,7 @@ const NormalisationService = {
     }
 
     if (fieldKey === 'b_code') {
-      return this.normalizePrefixedSevenDigitCode_(value, 'B') || value;
+      return this.normalizeBNumber_(value) || value;
     }
 
     if (fieldKey === 'carton_number') {
@@ -46,6 +46,32 @@ const NormalisationService = {
       .replace(/[^0-9]/g, '');
 
     return /^\d{7}$/.test(digits) ? prefix + digits : null;
+  },
+
+  normalizeBNumber_(value) {
+    let cleaned = String(value)
+      .toUpperCase()
+      .replace(/\s+/g, '')
+      .replace(/[^A-Z0-9]/g, '');
+
+    if (!cleaned) {
+      return null;
+    }
+
+    if (cleaned.startsWith('B')) {
+      cleaned = cleaned.slice(1);
+    }
+
+    let digits = cleaned
+      .replace(/[OQ]/g, '0')
+      .replace(/[IL]/g, '1')
+      .replace(/[^0-9]/g, '');
+
+    if (/^[85]\d{7}$/.test(digits)) {
+      digits = digits.slice(1);
+    }
+
+    return /^\d{7}$/.test(digits) ? 'B' + digits : null;
   },
 
   normalizeCartonNumber_(value) {

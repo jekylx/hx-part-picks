@@ -16,10 +16,15 @@
    - `Processing Log`
    - `_Processed Keys`
    - `Configuration`
+   - `_Summary Email Ledger`
+   - `_EOD Report Cache`
+   - `_EOD Outstanding Orders Cache`
+   - `_EOD Pallet Product Cache`
 7. Confirm internal sheets are hidden and protected, while `Part Pick Summary` remains editable.
 8. Confirm Drive folder `Part Pick Automation/Processed PDFs` exists.
 9. Create one time-driven trigger for `processPrinterEmails()`. `processPrinterEmails()` must never call `setup()`.
 10. Run `installSummaryRefreshTrigger()` once to create the installable edit trigger for `handleSummaryRefreshEdit(e)`.
+11. Optionally run `installDailyEodCacheWarmupTrigger()` once to create the separate daily warmup trigger for today's EOD report cache around 5am.
 
 ## Sheet Protection
 
@@ -43,19 +48,29 @@ If a parsed summary value is wrong, edit the value directly on the existing `Par
 
 This does not append a summary row, touch raw `Part Picks` rows, process printer emails, process PDFs, call Gemini, archive files, change Gmail labels, or change processed keys.
 
+## EOD Cache Warmup
+
+The EOD persistent cache is current-day only. EOD lookups still keep an in-memory runtime cache for any requested date inside one execution, but historical/random date requests should not read or write non-today data through the persistent sheet cache path.
+
+The cache is row-based for scale. `_EOD Report Cache` stores metadata only. `_EOD Outstanding Orders Cache` stores today's Outstanding Orders rows where `Order Type` is exactly `OL` after normalization. `_EOD Pallet Product Cache` stores today's full Pallet/Product by Member report with no filtering.
+
+`warmTodayEodReportCache()` warms only today's `outstandingOrders` and `palletAndProductByMembers` reports using the script timezone. It logs report key, date key, cache status, and safe row counts only. It does not touch Summary rows, raw `Part Picks`, printer Gmail, Gemini, Drive archive, labels, processed-key dedupe, or email.
+
+`installDailyEodCacheWarmupTrigger()` installs or repairs the optional daily time trigger around 5am for the warmup handler. EOD report emails arrive around 2am, so one 5am warmup is sufficient for now. It is separate from `installSummaryRefreshTrigger()` and must not remove unrelated triggers.
+
 ## Send Summary Email
 
 After reviewing and correcting an existing `Part Pick Summary` row, check that row's `Send Email` checkbox. The same installable edit trigger used by `Refresh EOD` routes the edit to the summary email sender. It sends one plain-text email to `jesse.lang.04@gmail.com` with summary row details, the spreadsheet link, the Drive PDF link, validation/status note if available, and the original PDF attached.
 
 The recipient comes from `CONFIG.summaryEmail.recipient`. The subject format is `HX Part Pick: <Member or (blank member)> - <Order No. or (blank order)>`. The PDF attachment is resolved from the Summary `PDF` column, including rich text links, `HYPERLINK` formulas, and raw Drive URLs.
 
-After a successful send, the script records `Email Sent At`, `Email Sent To`, and `Email Status = SENT`, clears `Email Error`, leaves `Send Email` checked, and best-effort protects `Send Email`, `Email Sent At`, `Email Sent To`, `Email Status`, and `Email Error` with the protection description `HX Part Picks sent email lock`.
+After a successful send, the script records `SENT` in `_Summary Email Ledger`, leaves `Send Email` checked, and best-effort protects the checked `Send Email` cell with the protection description `HX Part Picks sent email lock`.
 
-The durable duplicate guard is the email status data, not the checkbox. If `Email Sent At` is nonblank or `Email Status` is `SENT`, `SENDING`, `SEND_FAILED_BLOCKED`, `UNKNOWN`, or another nonblank blocking status, checking `Send Email` again will not send another email.
+The durable duplicate guard is `_Summary Email Ledger`, not the checkbox. If the ledger status is `SENT`, `SENDING`, `SEND_FAILED_BLOCKED`, `UNKNOWN`, or another nonblank blocking status, checking `Send Email` again will not send another email.
 
-If validation fails before sending, such as a missing or unreadable PDF link, the script writes `Email Status = VALIDATION_FAILED`, writes `Email Error`, resets `Send Email` to unchecked, and does not send.
+If validation fails before sending, such as a missing or unreadable PDF link, the script writes `VALIDATION_FAILED` and the error detail to the ledger, resets `Send Email` to unchecked, and does not send.
 
-If the send attempt throws after the row is reserved, the script writes `Email Status = SEND_FAILED_BLOCKED`, writes `Email Error`, and leaves the row visibly blocked. No duplicate email is more important than automatic retry. An admin must verify whether an email was sent before clearing `Email Sent At`, `Email Sent To`, `Email Status`, `Email Error`, removing any sent email cell protections, and retrying.
+If the send attempt throws after the row is reserved, the script writes `SEND_FAILED_BLOCKED` and the error detail to the ledger, then unchecks `Send Email`. No duplicate email is more important than automatic retry. An admin must verify whether an email was sent before resetting ledger state and retrying.
 
 This email path does not append a summary row, touch raw `Part Picks` rows, process printer emails, process PDFs, call Gemini, archive files, change Gmail labels, or change processed keys.
 
@@ -104,7 +119,7 @@ Troubleshooting notes:
 
 - If Summary appends near row 1001, check for old deployed code still using `getLastRow()+1`, stale `TEST::` keys or real `_Key` values far down Summary column A, and Apps Script not being updated because `clasp push` was not run.
 - If `processPrinterEmails()` appears to do nothing, check the Gmail query, found thread count, skipped duplicate batch/page logs, thread-level failure logs, and summary append stats.
-- If email does not send, check `Email Status` and `Email Error` before retrying.
+- If email does not send, check `_Summary Email Ledger` and `Processing Log` before retrying.
 
 ## Updating Script Properties
 
@@ -124,5 +139,6 @@ In Apps Script:
 5. Get explicit approval for `clasp push`.
 6. Run `clasp push`.
 7. Run `runLocalTests()` in Apps Script.
-8. If trigger code changed, run `installSummaryRefreshTrigger()` and confirm it did not create duplicates.
-9. Smoke test with controlled input before relying on the trigger. For `Send Email`, use a reviewed test summary row and confirm exactly one email is sent to the configured recipient with the PDF attached.
+8. If Summary trigger code changed, run `installSummaryRefreshTrigger()` and confirm it did not create duplicates.
+9. If EOD cache warmup trigger code changed or the trigger is not present, run `installDailyEodCacheWarmupTrigger()` and confirm it did not create duplicates.
+10. Smoke test with controlled input before relying on the trigger. For `Send Email`, use a reviewed test summary row and confirm exactly one email is sent to the configured recipient with the PDF attached.

@@ -380,6 +380,61 @@ const PalletAndProductByMembersEodReportService = {
     };
   },
 
+  confirmOwnerForBNumber(lookup, bNumber, owner) {
+    if (!lookup) {
+      return {
+        status: 'missing_lookup',
+        owner: ''
+      };
+    }
+
+    const normalizedBNumber = EodReportNormalisationService.normalizeBNumber(bNumber);
+    const normalizedOwner = EodReportNormalisationService.normalizeOwner(owner);
+
+    if (!normalizedBNumber || !normalizedOwner) {
+      return {
+        status: 'missing_input',
+        owner: ''
+      };
+    }
+
+    const matches = lookup.byBNumberAndOwner
+      ? lookup.byBNumberAndOwner[
+        EodReportNormalisationService.bOwnerKey(normalizedBNumber, normalizedOwner)
+      ] || []
+      : [];
+
+    if (matches.length > 0) {
+      return {
+        status: 'confirmed',
+        owner: normalizedOwner,
+        count: matches.length
+      };
+    }
+
+    const uniqueOwner = this.getUniqueOwnerForBNumber(lookup, normalizedBNumber);
+
+    if (uniqueOwner.status === 'unique') {
+      if (uniqueOwner.owner === normalizedOwner) {
+        return {
+          status: 'confirmed',
+          owner: normalizedOwner,
+          count: 0
+        };
+      }
+
+      return {
+        status: 'owner_mismatch',
+        owner: uniqueOwner.owner
+      };
+    }
+
+    return {
+      status: uniqueOwner.status === 'ambiguous' ? 'ambiguous_owner' : 'missing_owner',
+      owner: ''
+    };
+  },
+
   buildLookup_(report) {
     const columns = this.reportConfig_().columns;
 

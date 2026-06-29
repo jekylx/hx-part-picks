@@ -107,23 +107,26 @@ const OutstandingOrdersEodReportService = {
       return;
     }
 
-    const ownerCheck = this.getBNumberOwnerConfirmation_(context, rowIndex, dateKey);
+    const ownerCheck = this.getBNumberOwnerConfirmation_(context, rowIndex, dateKey, match.owner);
 
-    if (ownerCheck.status !== 'unique') {
+    if (ownerCheck.status === 'owner_mismatch') {
       EodReportValidationService.noMatch(
         validationRows,
         rowIndex,
-        `${reportConfig.displayName}: correction blocked: B Number owner could not confirm order owner.`
+        `${reportConfig.displayName}: correction blocked: matched order owner ${match.owner || '(blank)'} does not match B Number owner ${ownerCheck.owner || '(blank)'}.`
       );
       result.blocked++;
       return;
     }
 
-    if (ownerCheck.owner !== match.owner) {
+    if (ownerCheck.status !== 'confirmed') {
       EodReportValidationService.noMatch(
         validationRows,
         rowIndex,
-        `${reportConfig.displayName}: correction blocked: matched order owner ${match.owner || '(blank)'} does not match B Number owner ${ownerCheck.owner || '(blank)'}.`
+        [
+          `${reportConfig.displayName}: correction blocked: B Number owner could not confirm order owner.`,
+          `Reason: ${ownerCheck.status || 'unknown'}`
+        ].join('\n')
       );
       result.blocked++;
       return;
@@ -200,14 +203,15 @@ const OutstandingOrdersEodReportService = {
     return false;
   },
 
-  getBNumberOwnerConfirmation_(context, rowIndex, dateKey) {
+  getBNumberOwnerConfirmation_(context, rowIndex, dateKey, orderOwner) {
     const palletConfig = CONFIG.eodReports.reports.palletAndProductByMembers;
     const bNumber = context.value(palletConfig.summaryColumns.bNumber, rowIndex);
     const lookup = PalletAndProductByMembersEodReportService.getLookupForDate(dateKey);
 
-    return PalletAndProductByMembersEodReportService.getUniqueOwnerForBNumber(
+    return PalletAndProductByMembersEodReportService.confirmOwnerForBNumber(
       lookup,
-      bNumber
+      bNumber,
+      orderOwner
     );
   },
 

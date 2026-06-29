@@ -79,6 +79,55 @@ function installSummaryRefreshTrigger() {
   Logger.log(`${handlerName} trigger installed.`);
 }
 
+function warmTodayEodReportCache() {
+  const dateKey = EodReportCsvService.getCurrentDateKey_();
+  const reportKeys = [
+    'outstandingOrders',
+    'palletAndProductByMembers'
+  ];
+
+  reportKeys.forEach(reportKey => {
+    const result = EodReportCsvService.getReportForDateResult_(reportKey, dateKey);
+    const report = result.report;
+    const rowCount = report && Array.isArray(report.rows) ? report.rows.length : 0;
+
+    Logger.log([
+      'EOD cache warmup',
+      `reportKey=${reportKey}`,
+      `dateKey=${dateKey}`,
+      `status=${result.status}`,
+      `rowCount=${rowCount}`
+    ].join(' '));
+  });
+}
+
+function installDailyEodCacheWarmupTrigger() {
+  installDailyEodCacheWarmupTrigger_({
+    scriptApp: ScriptApp
+  });
+}
+
+function installDailyEodCacheWarmupTrigger_(deps) {
+  const services = deps || {};
+  const scriptApp = services.scriptApp || ScriptApp;
+  const handlerName = 'warmTodayEodReportCache';
+  const triggers = scriptApp.getProjectTriggers();
+
+  if (hasProjectTriggerForHandler_(triggers, handlerName)) {
+    Logger.log(`${handlerName} trigger already installed.`);
+    return;
+  }
+
+  scriptApp
+    .newTrigger(handlerName)
+    .timeBased()
+    .everyDays(1)
+    .atHour(5)
+    .create();
+
+  Logger.log(`${handlerName} daily 5am trigger installed.`);
+}
+
 function isSummaryRefreshEdit_(e) {
   return isSummaryCheckboxEditForHeader_(e, 'Refresh EOD');
 }

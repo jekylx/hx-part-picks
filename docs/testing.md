@@ -2,7 +2,7 @@
 
 ## Apps Script Tests
 
-Run `runLocalTests()` inside Apps Script after an approved `clasp push`. The current expected result is 72 passing tests.
+Run `runLocalTests()` inside Apps Script after an approved `clasp push`.
 
 The test harness:
 
@@ -13,7 +13,9 @@ The test harness:
 - Validates append-only summary behavior.
 - Validates `_Key`-based Summary row placement so test harness rows and production sync do not use `getLastRow()+1`.
 - Validates the `Refresh EOD` checkbox config, edit filtering, trigger duplicate helper, and one-row coordinator refresh routing.
-- Validates the `Send Email` checkbox config, edit filtering, duplicate-send guards, validation failures, subject/body composition, PDF attachment handling, and blocked send failures with stubbed mail/Drive services.
+- Validates the `Send Email` checkbox config, edit filtering, ledger-backed duplicate-send guards, validation failures, subject/body composition, PDF attachment handling, and blocked send failures with stubbed mail/Drive services.
+- Validates B-number OCR normalization for leading `B` misread as `8` or `5`.
+- Validates the EOD report runtime cache, current-day sheet-backed cache behavior, today-only warmup, and the separate daily warmup trigger installer with stubs.
 - Validates batch/page processing key stability.
 - Validates EOD normalization helpers.
 - Validates Outstanding Orders Order+B matching and blocked cases.
@@ -21,7 +23,7 @@ The test harness:
 - Checks the PDF processor health endpoint.
 
 The tests do not read real printer emails or call Gemini extraction.
-The summary email tests do not send real emails and do not read real Drive files; they stub the mail sender and Drive file lookup.
+The summary email tests do not send real emails and do not read real Drive files; they stub the mail sender, Drive file lookup, and internal email ledger.
 `cleanupTestRows()` removes `TEST::` rows from `Part Picks`, `Part Pick Summary`, and `_Processed Keys` even when a test row was accidentally created far down the sheet.
 
 ## Adding Tests
@@ -87,6 +89,7 @@ Summary test helpers must use the same `_Key`-based append placement as producti
 - Confirm `Part Pick Summary` appended one row and did not overwrite existing manual rows.
 - Confirm EOD validation notes/colours are reasonable.
 - Correct a summary row in a controlled test, check `Refresh EOD`, and confirm only that row's EOD validation refreshes and the checkbox resets.
-- On a controlled reviewed summary row, check `Send Email` and confirm exactly one email is sent to `jesse.lang.04@gmail.com`, the PDF is attached, `Email Status` becomes `SENT`, `Email Sent At`/`Email Sent To` are filled, and checking again does not send a duplicate.
+- Run `warmTodayEodReportCache()` only after `runLocalTests()` passes if you want to manually verify today's EOD cache warmup; confirm it logs only report keys, date key, cache status, and row counts. Confirm `_EOD Report Cache` contains metadata only, `_EOD Outstanding Orders Cache` contains only `Order Type == OL` rows, and `_EOD Pallet Product Cache` contains the full Pallet/Product report.
+- On a controlled reviewed summary row, check `Send Email` and confirm exactly one email is sent to `jesse.lang.04@gmail.com`, the PDF is attached, `_Summary Email Ledger` records `SENT`, the checkbox remains checked/locked as much as Apps Script allows, and checking again does not send a duplicate.
 - Confirm Gmail thread labeling, read state, and archive behavior.
 - Confirm `Processing Log` has no unexpected critical errors.

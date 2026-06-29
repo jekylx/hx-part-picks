@@ -6,6 +6,8 @@ HX Part Picks is a single Apps Script project. Source is organized into service-
 
 - `setup()`: manual setup/maintenance only. Creates or updates Gmail labels, sheets, Drive folders, missing summary rows, internal sheet protections, and hidden implementation sheets. It is not a wipe/reset and does not clear existing data.
 - `processPrinterEmails()`: production processor. Searches Gmail, processes PDFs, writes rows, dedupes, archives, labels, and updates summary rows. It must never call `setup()`.
+- `warmTodayEodReportCache()`: production-safe cache warmup. Fetches only today's Outstanding Orders and Pallet/Product EOD reports into the current-day sheet cache and has no Summary/raw/Gemini/printer Gmail/Drive/dedupe/email side effects.
+- `installDailyEodCacheWarmupTrigger()`: optional manual installer for the separate daily 5am EOD cache warmup trigger.
 - `runLocalTests()`: Apps Script test harness. Does not read real printer emails or call Gemini, but it does include a PDF processor health check.
 
 ## Main Modules
@@ -18,10 +20,10 @@ HX Part Picks is a single Apps Script project. Source is organized into service-
 - `PromptService.js`: extraction prompt builder.
 - `SheetService.js`: raw sheet, log sheet, processed key sheet, configuration sheet setup, raw row append.
 - `SummaryService.js`: append-only summary creation by hidden `_Key`, summary formatting, SLA formulas, and `_Key`-based append placement.
-- `SummaryEmailService.js`: sends reviewed summary row details and the original Drive PDF attachment when `Send Email` is checked; records durable email status and blocks duplicate sends.
+- `SummaryEmailService.js`: sends reviewed summary row details and the original Drive PDF attachment when `Send Email` is checked; records durable email state in `_Summary Email Ledger` and blocks duplicate sends.
 - `DedupeService.js`: processed key lookup and writes.
 - `DriveService.js`: Drive folder creation and PDF archive naming.
-- `EodReportCsvService.js`: EOD report Gmail search, CSV parsing, required header lookup.
+- `EodReportCsvService.js`: EOD report runtime cache, sheet-backed cache, Gmail search, CSV parsing, required header lookup.
 - `EodReportCoordinator.js`: applies EOD services to new summary rows and writes validation.
 - `PalletAndProductByMemberEodReportService.js`: C/B/location/member/product enrichment.
 - `OutstandingOrdersEodReportService.js`: order/customer/carrier/state enrichment using Order+B matching.
@@ -59,6 +61,10 @@ Gmail Inbox printer thread
 - `Processing Log`: status/error log rows.
 - `_Processed Keys`: dedupe state for batch and page processing keys.
 - `Configuration`: generated field configuration reference.
+- `_Summary Email Ledger`: internal durable email send ledger keyed by Summary `_Key`, recipient, and PDF id.
+- `_EOD Report Cache`: internal current-day EOD cache metadata.
+- `_EOD Outstanding Orders Cache`: internal current-day row cache for Outstanding Orders `Order Type == OL` rows.
+- `_EOD Pallet Product Cache`: internal current-day row cache for the full Pallet/Product by Member report.
 - `Test Results`: created by `runLocalTests()`.
 
 All sheets except `Part Pick Summary` are internal implementation tabs. `setup()` hides them and applies the recognizable sheet-level protection `HX Part Picks protected internal sheet`. Protection is script-owned/idempotent. If that internal protection is found on Summary, setup removes only the script-owned protection and leaves Summary editable.
@@ -111,6 +117,22 @@ The installable edit trigger still points to `handleSummaryRefreshEdit(e)`. That
 
 `Send Email` only operates on the existing `Part Pick Summary` row. It reads the summary `PDF` Drive link, supports rich text links, `HYPERLINK` formulas, and raw Drive URLs, fetches the Drive PDF blob, and sends via `MailApp.sendEmail()` to `CONFIG.summaryEmail.recipient`.
 
-Duplicate prevention is row-local and durable: a nonblank `Email Sent At`, `Email Status = SENT`, or another blocking email status prevents another send. The checkbox is left checked after success, but it is not the source of truth.
+Duplicate prevention is ledger-backed and durable. The send key is based on the hidden Summary `_Key`, configured recipient, and PDF file id. A ledger status of `SENT`, `SENDING`, `SEND_FAILED_BLOCKED`, `UNKNOWN`, or another nonblank blocking value prevents another send. The checkbox is left checked after success, but it is not the source of truth.
 
-Subject format is `HX Part Pick: <Member or (blank member)> - <Order No. or (blank order)>`. The email body includes the spreadsheet link, PDF Drive link, row details, and validation/status note if available. Validation failures write `VALIDATION_FAILED` and reset `Send Email`. Send exceptions after reservation write `SEND_FAILED_BLOCKED` and reset `Send Email`; manual admin review/reset is required before retrying uncertain or blocked sends.
+Subject format is `HX Part Pick: <Member or (blank member)> - <Order No. or (blank order)>`. The email body includes the spreadsheet link, PDF Drive link, row details, and validation/status note if available. Validation failures write `VALIDATION_FAILED` to the ledger and reset `Send Email`. Send exceptions after reservation write `SEND_FAILED_BLOCKED` to the ledger and reset `Send Email`; manual admin review/reset is required before retrying uncertain or blocked sends.
+
+## EOD Report Cache
+
+EOD report lookups first check an in-memory runtime cache. The runtime cache can hold any report/date requested during one execution.
+
+The persistent EOD cache is current-day only, using the script timezone date key. Historical/random date requests may still use runtime cache during the current execution and may fall back to Gmail, but should not read or write arbitrary dates into the persistent sheet cache.
+
+The cache is row-based because reports can contain tens of thousands of rows. `_EOD Report Cache` stores metadata only: report key, date key, source message/file metadata, header JSON, row count, status, and error. Actual rows live in report-specific internal sheets and are read/written with batched `getValues()`/`setValues()`.
+
+`_EOD Pallet Product Cache` stores the full Pallet/Product by Member report with no filtering. It is the B/member/location/product truth source.
+
+`_EOD Outstanding Orders Cache` stores only Outstanding Orders rows where the `Order Type` column normalizes exactly to `OL`. Parsing filters non-OL rows as early as practical, and Part Pick EOD enrichment searches only the OL row set.
+
+If the cache sheet is missing or a cached row is corrupt, the service logs the cache issue and falls back to the existing Gmail search/parse path. `setup()` creates and protects the cache sheet; `processPrinterEmails()` does not call `setup()`.
+
+`warmTodayEodReportCache()` preloads today's `outstandingOrders` and `palletAndProductByMembers` reports only. EOD report emails arrive around 2am, so a single 5am warmup is sufficient for now. The optional `installDailyEodCacheWarmupTrigger()` helper installs a separate daily trigger and does not replace or modify the Summary edit trigger.

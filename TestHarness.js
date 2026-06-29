@@ -30,6 +30,7 @@ function runLocalTests() {
   runTest_('Config has required blocks', testConfigHasRequiredBlocks_, results);
   runTest_('Summary config has email columns with Send Email at end', testSummaryEmailConfig_, results);
   runTest_('Gmail query is correct', testGmailQuery_, results);
+  runTest_('B number OCR normalisation handles leading B misreads', testBNumberOcrNormalisation_, results);
   runTest_('Order number normalisation accepts variable length', testOrderNumberNormalisation_, results);
   runTest_('Outstanding Orders order parsing accepts variable length', testOutstandingOrdersOrderParsing_, results);
   runTest_('Outstanding Orders Search Criteria B parsing works', testOutstandingOrdersSearchCriteriaBParsing_, results);
@@ -39,6 +40,14 @@ function runLocalTests() {
   runTest_('EOD state validation helper works', testEodStateValidation_, results);
   runTest_('EOD customer name normalisation helper works', testEodCustomerNameNormalisation_, results);
   runTest_('EOD report header normalisation helper works', testEodReportHeaderNormalisation_, results);
+  runTest_('EOD report sheet cache writes today as rows', testEodReportSheetCacheWritesToday_, results);
+  runTest_('EOD report sheet cache skips non-today writes', testEodReportSheetCacheSkipsNonTodayWrites_, results);
+  runTest_('EOD report runtime cache covers repeated reads', testEodReportRuntimeCache_, results);
+  runTest_('EOD report cache does not store row JSON blobs', testEodReportCacheDoesNotStoreRowJsonBlobs_, results);
+  runTest_('Outstanding Orders cache keeps OL rows only', testOutstandingOrdersCacheKeepsOlRowsOnly_, results);
+  runTest_('Outstanding Orders lookup uses OL rows only', testOutstandingOrdersLookupUsesOlRowsOnly_, results);
+  runTest_('Pallet/Product cache keeps all rows', testPalletProductCacheKeepsAllRows_, results);
+  runTest_('EOD report warmup caches today reports only', testWarmTodayEodReportCache_, results);
   runTest_('EOD date helpers work', testEodDateHelpers_, results);
   runTest_('EOD lookup key helpers work', testEodLookupKeyHelpers_, results);
   runTest_('EOD result counters include blocked', testEodResultCountersIncludeBlocked_, results);
@@ -76,10 +85,11 @@ function runLocalTests() {
   runTest_('Summary refresh edit handler refreshes checked rows', testSummaryRefreshEditHandlerCallsRefresh_, results);
   runTest_('Summary refresh edit handler resets checkbox after failure', testSummaryRefreshEditHandlerResetsAfterFailure_, results);
   runTest_('Summary refresh trigger duplicate check works', testSummaryRefreshTriggerDuplicateCheck_, results);
+  runTest_('Daily EOD cache warmup trigger duplicate check works', testDailyEodCacheWarmupTriggerDuplicateCheck_, results);
   runTest_('Summary send email edit handler filters edits strictly', testSummarySendEmailEditFilter_, results);
   runTest_('Summary send email handler sends valid row once', testSummarySendEmailSendsValidRowOnce_, results);
-  runTest_('Summary send email sent marker prevents duplicate', testSummarySendEmailSentStatusPreventsDuplicate_, results);
-  runTest_('Summary send email sent timestamp prevents duplicate', testSummarySendEmailSentAtPreventsDuplicate_, results);
+  runTest_('Summary send email ledger prevents duplicate', testSummarySendEmailSentLedgerPreventsDuplicate_, results);
+  runTest_('Summary send email manual uncheck after sent is restored', testSummarySendEmailManualUncheckAfterSentRestored_, results);
   runTest_('Summary send email blocking status prevents duplicate', testSummarySendEmailBlockingStatusPreventsDuplicate_, results);
   runTest_('Summary send email validation failure resets checkbox', testSummarySendEmailValidationFailureResets_, results);
   runTest_('Summary send email missing PDF blocks send', testSummarySendEmailMissingPdfBlocks_, results);
@@ -195,15 +205,13 @@ function testConfigHasRequiredBlocks_() {
 
 function testSummaryEmailConfig_() {
   const columns = CONFIG.summary.columns;
-  const tail = columns.slice(-5).map(column => column.header);
+  const headers = columns.map(column => column.header);
   const refreshColumn = columns.find(column => column.header === 'Refresh EOD');
   const sendColumn = columns[columns.length - 1];
 
-  assertEquals_(
-    'Email Sent At|Email Sent To|Email Status|Email Error|Send Email',
-    tail.join('|'),
-    'Email columns must be appended in the expected order.'
-  );
+  ['Email Sent At', 'Email Sent To', 'Email Status', 'Email Error'].forEach(header => {
+    assertEquals_(-1, headers.indexOf(header), `${header} must not be visible in Summary.`);
+  });
   assertEquals_(true, refreshColumn.manual, 'Refresh EOD must be manual.');
   assertEquals_('checkbox', refreshColumn.type, 'Refresh EOD must be a checkbox column.');
   assertEquals_('Send Email', sendColumn.header, 'Send Email must be the final summary column.');
@@ -214,6 +222,7 @@ function testSummaryEmailConfig_() {
     CONFIG.summaryEmail.recipient,
     'Summary email recipient is not configured as expected.'
   );
+  assertTruthy_(CONFIG.sheets.summaryEmailLedgerSheetName, 'Summary email ledger sheet must be configured.');
 }
 
 function testGmailQuery_() {
@@ -293,6 +302,27 @@ function testOrderNumberNormalisation_() {
     '0012345',
     NormalisationService.normalizeOrderNumber_('0012345'),
     'Order number should preserve leading zeros.'
+  );
+}
+
+function testBNumberOcrNormalisation_() {
+  [
+    ['80867173', 'B0867173'],
+    ['50867173', 'B0867173'],
+    ['B0867173', 'B0867173'],
+    ['0867173', 'B0867173']
+  ].forEach(pair => {
+    assertEquals_(
+      pair[1],
+      NormalisationService.normalizeSummaryValue('b_code', pair[0]),
+      `B Number should normalize ${pair[0]}.`
+    );
+  });
+
+  assertEquals_(
+    '12345678',
+    NormalisationService.normalizeSummaryValue('b_code', '12345678'),
+    'Unrelated eight digit values must not be blindly accepted as B Numbers.'
   );
 }
 
@@ -547,6 +577,259 @@ function testEodReportHeaderNormalisation_() {
   );
 }
 
+function testEodReportSheetCacheWritesToday_() {
+  const cacheSheets = buildMockEodReportCacheSheets_();
+  let finderCalls = 0;
+  const report = buildMockEodCsvReport_('outstandingOrders', '2026-05-01');
+
+  EodReportCsvService.resetTestDoubles_();
+  EodReportCsvService.setCacheSheetsForTest_(cacheSheets.metadata, cacheSheets.rows);
+  EodReportCsvService.setTodayDateKeyForTest_('2026-05-01');
+  EodReportCsvService.setReportFinderForTest_(function() {
+    finderCalls++;
+    return report;
+  });
+
+  try {
+    const first = EodReportCsvService.getReportForDate('outstandingOrders', '2026-05-01');
+
+    assertEquals_(1, finderCalls, 'Today lookup should fetch once.');
+    assertEquals_('RP_OUTSTANDING_ORDERS.csv', first.filename, 'Today lookup should return fetched report.');
+    assertEquals_(1, cacheSheets.metadata.dataRows.length, 'Today lookup should write one metadata cache row.');
+    assertEquals_(1, cacheSheets.rows.outstandingOrders.dataRows.length, 'Today lookup should write row cache rows.');
+
+    EodReportCsvService.resetTestDoubles_();
+    EodReportCsvService.setCacheSheetsForTest_(cacheSheets.metadata, cacheSheets.rows);
+    EodReportCsvService.setTodayDateKeyForTest_('2026-05-01');
+    EodReportCsvService.setReportFinderForTest_(function() {
+      finderCalls++;
+      return null;
+    });
+
+    const third = EodReportCsvService.getReportForDate('outstandingOrders', '2026-05-01');
+
+    assertEquals_(1, finderCalls, 'Sheet cache hit should avoid Gmail/report finder in later execution.');
+    assertEquals_('RP_OUTSTANDING_ORDERS.csv', third.filename, 'Sheet cached report should be returned.');
+    assertEquals_('Order No.', third.headers[0], 'Sheet cached headers should round-trip.');
+    assertEquals_('ABCDE123', third.rows[0][0], 'Sheet cached rows should round-trip.');
+  } finally {
+    EodReportCsvService.resetTestDoubles_();
+  }
+}
+
+function testEodReportSheetCacheSkipsNonTodayWrites_() {
+  const cacheSheets = buildMockEodReportCacheSheets_();
+  let finderCalls = 0;
+  const report = buildMockEodCsvReport_('outstandingOrders', '2026-04-30');
+
+  EodReportCsvService.resetTestDoubles_();
+  EodReportCsvService.setCacheSheetsForTest_(cacheSheets.metadata, cacheSheets.rows);
+  EodReportCsvService.setTodayDateKeyForTest_('2026-05-01');
+  EodReportCsvService.setReportFinderForTest_(function() {
+    finderCalls++;
+    return report;
+  });
+
+  try {
+    const first = EodReportCsvService.getReportForDate('outstandingOrders', '2026-04-30');
+
+    assertEquals_(1, finderCalls, 'Non-today lookup should still fetch report when needed.');
+    assertEquals_('2026-04-30', first.dateKey, 'Non-today lookup should return fetched report.');
+    assertEquals_(0, cacheSheets.metadata.dataRows.length, 'Non-today lookup must not write metadata sheet cache.');
+    assertEquals_(0, cacheSheets.rows.outstandingOrders.dataRows.length, 'Non-today lookup must not write row sheet cache.');
+
+    EodReportCsvService.resetTestDoubles_();
+    EodReportCsvService.setCacheSheetsForTest_(cacheSheets.metadata, cacheSheets.rows);
+    EodReportCsvService.setTodayDateKeyForTest_('2026-05-01');
+    EodReportCsvService.setReportFinderForTest_(function() {
+      finderCalls++;
+      return null;
+    });
+
+    const second = EodReportCsvService.getReportForDate('outstandingOrders', '2026-04-30');
+
+    assertEquals_(2, finderCalls, 'Non-today later execution should not read from sheet cache.');
+    assertEquals_(null, second, 'Non-today later execution should fall through to finder result.');
+  } finally {
+    EodReportCsvService.resetTestDoubles_();
+  }
+}
+
+function testEodReportRuntimeCache_() {
+  const cacheSheets = buildMockEodReportCacheSheets_();
+  let finderCalls = 0;
+  const report = buildMockEodCsvReport_('outstandingOrders', '2026-04-30');
+
+  EodReportCsvService.resetTestDoubles_();
+  EodReportCsvService.setCacheSheetsForTest_(cacheSheets.metadata, cacheSheets.rows);
+  EodReportCsvService.setTodayDateKeyForTest_('2026-05-01');
+  EodReportCsvService.setReportFinderForTest_(function() {
+    finderCalls++;
+    return report;
+  });
+
+  try {
+    const first = EodReportCsvService.getReportForDate('outstandingOrders', '2026-04-30');
+    const second = EodReportCsvService.getReportForDate('outstandingOrders', '2026-04-30');
+
+    assertEquals_(1, finderCalls, 'Runtime cache should avoid repeated report finder calls.');
+    assertEquals_(first, second, 'Second lookup in same execution should return runtime cached object.');
+    assertEquals_(0, cacheSheets.metadata.dataRows.length, 'Runtime cache must not require a sheet write for non-today.');
+  } finally {
+    EodReportCsvService.resetTestDoubles_();
+  }
+}
+
+function testEodReportCacheDoesNotStoreRowJsonBlobs_() {
+  const cacheSheets = buildMockEodReportCacheSheets_();
+  const report = buildMockEodCsvReport_('outstandingOrders', '2026-05-01', {
+    rows: [
+      ['ABCDE123', 'Customer One', 'NXM', 'VIC', 'BB&V1990&OB1234567', '1', 'OL'],
+      ['ABCDE124', 'Customer Two', 'NXM', 'VIC', 'BB&V1990&OB1234568', '1', 'OL']
+    ]
+  });
+
+  EodReportCsvService.resetTestDoubles_();
+  EodReportCsvService.setCacheSheetsForTest_(cacheSheets.metadata, cacheSheets.rows);
+  EodReportCsvService.setTodayDateKeyForTest_('2026-05-01');
+  EodReportCsvService.setReportFinderForTest_(function() {
+    return report;
+  });
+
+  try {
+    EodReportCsvService.getReportForDate('outstandingOrders', '2026-05-01');
+
+    assertEquals_(1, cacheSheets.metadata.dataRows.length, 'Metadata cache should have one row.');
+    assertEquals_(2, cacheSheets.rows.outstandingOrders.dataRows.length, 'Row cache should store report rows separately.');
+    assertEquals_(2, cacheSheets.metadata.dataRows[0][9], 'Metadata should store row count, not row JSON.');
+    assertNotContains_(
+      cacheSheets.metadata.dataRows[0].join(' '),
+      'Customer One',
+      'Metadata cache must not contain report row contents.'
+    );
+    assertEquals_(0, cacheSheets.metadata.appendRowCalls, 'Metadata cache should not use appendRow.');
+    assertEquals_(0, cacheSheets.rows.outstandingOrders.appendRowCalls, 'Row cache should not use appendRow loops.');
+    assertTruthy_(cacheSheets.rows.outstandingOrders.setValuesCalls > 0, 'Row cache should use batched setValues.');
+  } finally {
+    EodReportCsvService.resetTestDoubles_();
+  }
+}
+
+function testOutstandingOrdersCacheKeepsOlRowsOnly_() {
+  const cacheSheets = buildMockEodReportCacheSheets_();
+  const report = buildMockEodCsvReport_('outstandingOrders', '2026-05-01', {
+    rows: [
+      ['ABCDE123', 'OL Customer', 'NXM', 'VIC', 'BB&V1990&OB1234567', '1', 'OL'],
+      ['ABCDE124', 'Non OL Customer', 'NXM', 'VIC', 'BB&V1990&OB1234568', '1', 'SO'],
+      ['ABCDE125', 'Blank Type Customer', 'NXM', 'VIC', 'BB&V1990&OB1234569', '1', '']
+    ]
+  });
+
+  EodReportCsvService.resetTestDoubles_();
+  EodReportCsvService.setCacheSheetsForTest_(cacheSheets.metadata, cacheSheets.rows);
+  EodReportCsvService.setTodayDateKeyForTest_('2026-05-01');
+  EodReportCsvService.setReportFinderForTest_(function() {
+    return report;
+  });
+
+  try {
+    const cached = EodReportCsvService.getReportForDate('outstandingOrders', '2026-05-01');
+
+    assertEquals_(1, cached.rows.length, 'Only OL rows should be returned from Outstanding Orders report parsing.');
+    assertEquals_('OL Customer', cached.rows[0][1], 'OL row should remain.');
+    assertEquals_(1, cacheSheets.rows.outstandingOrders.dataRows.length, 'Only OL rows should be persisted.');
+    assertEquals_('OL Customer', cacheSheets.rows.outstandingOrders.dataRows[0][9], 'Persisted row should be the OL row.');
+  } finally {
+    EodReportCsvService.resetTestDoubles_();
+  }
+}
+
+function testOutstandingOrdersLookupUsesOlRowsOnly_() {
+  const report = buildMockOutstandingOrdersReport_([
+    ['ABCDE1234567', 'Non OL Customer', 'NXM', 'VIC', 'BB&V1990&OB1234567', '1', 'SO'],
+    ['ABCDE1234568', 'OL Customer', 'NXM', 'VIC', 'BB&V1990&OB1234568', '1', 'OL']
+  ]);
+  const filteredReport = {
+    ...report,
+    rows: report.rows.filter(row =>
+      EodReportCsvService.isOutstandingOrdersCacheableRow_(row, report.headers)
+    )
+  };
+  const lookup = OutstandingOrdersEodReportService.buildLookup_(filteredReport);
+
+  assertEquals_(
+    undefined,
+    lookup.byOrderNumberAndBNumber['1234567::B1234567'],
+    'Lookup should not include non-OL Outstanding Orders rows.'
+  );
+  assertTruthy_(
+    lookup.byOrderNumberAndBNumber['1234568::B1234568'],
+    'Lookup should include OL Outstanding Orders rows.'
+  );
+}
+
+function testPalletProductCacheKeepsAllRows_() {
+  const cacheSheets = buildMockEodReportCacheSheets_();
+  const report = buildMockEodCsvReport_('palletAndProductByMembers', '2026-05-01', {
+    rows: [
+      ['A0101', 'C1234567', 'B1234567', 'ABCDE', 'M001', 'P001', 'Product One', '2020', '750ML'],
+      ['A0102', 'C1234568', 'B1234568', 'FGHIJ', 'M002', 'P002', 'Product Two', '2021', '1500ML']
+    ]
+  });
+
+  EodReportCsvService.resetTestDoubles_();
+  EodReportCsvService.setCacheSheetsForTest_(cacheSheets.metadata, cacheSheets.rows);
+  EodReportCsvService.setTodayDateKeyForTest_('2026-05-01');
+  EodReportCsvService.setReportFinderForTest_(function() {
+    return report;
+  });
+
+  try {
+    const cached = EodReportCsvService.getReportForDate('palletAndProductByMembers', '2026-05-01');
+
+    assertEquals_(2, cached.rows.length, 'Pallet/Product rows should not be filtered.');
+    assertEquals_(2, cacheSheets.rows.palletAndProductByMembers.dataRows.length, 'Pallet/Product cache should persist every row.');
+  } finally {
+    EodReportCsvService.resetTestDoubles_();
+  }
+}
+
+function testWarmTodayEodReportCache_() {
+  const cacheSheets = buildMockEodReportCacheSheets_();
+  const requested = [];
+  const sideEffects = buildWarmupSideEffectGuards_();
+
+  EodReportCsvService.resetTestDoubles_();
+  EodReportCsvService.setCacheSheetsForTest_(cacheSheets.metadata, cacheSheets.rows);
+  EodReportCsvService.setTodayDateKeyForTest_('2026-05-01');
+  EodReportCsvService.setReportFinderForTest_(function(reportKey, dateKey) {
+    requested.push(`${reportKey}::${dateKey}`);
+    return buildMockEodCsvReport_(reportKey, dateKey);
+  });
+
+  try {
+    warmTodayEodReportCache();
+
+    assertEquals_(
+      'outstandingOrders::2026-05-01,palletAndProductByMembers::2026-05-01',
+      requested.join(','),
+      'Warmup should request exactly the two current-day EOD reports.'
+    );
+    assertEquals_(2, cacheSheets.metadata.dataRows.length, 'Warmup should write two current-day metadata rows.');
+    assertEquals_(
+      '2026-05-01,2026-05-01',
+      cacheSheets.metadata.dataRows.map(row => row[2]).join(','),
+      'Warmup sheet cache writes must be for today only.'
+    );
+    assertEquals_(1, cacheSheets.rows.outstandingOrders.dataRows.length, 'Warmup should write Outstanding Orders row cache.');
+    assertEquals_(1, cacheSheets.rows.palletAndProductByMembers.dataRows.length, 'Warmup should write Pallet/Product row cache.');
+    assertEquals_(0, sideEffects.count(), 'Warmup must not touch summary/raw/dedupe/email/Gemini/Drive/Gmail-printer services.');
+  } finally {
+    sideEffects.restore();
+    EodReportCsvService.resetTestDoubles_();
+  }
+}
+
 function testEodDateHelpers_() {
   const date = new Date('2026-05-01T09:30:00+10:00');
 
@@ -613,7 +896,16 @@ function testOutstandingOrdersCustomerOwnerGate_() {
   const restore = stubPalletLookupForTest_({
     byBNumber: {
       B1234567: [
-        { owner: 'ABCDE' }
+        { owner: 'ABCDE' },
+        { owner: 'VWXYZ' }
+      ]
+    },
+    byBNumberAndOwner: {
+      'B1234567::ABCDE': [
+        { owner: 'ABCDE', memberNo: 'MEM1' }
+      ],
+      'B1234567::VWXYZ': [
+        { owner: 'VWXYZ', memberNo: 'MEM2' }
       ]
     }
   });
@@ -1912,6 +2204,47 @@ function testSummaryRefreshTriggerDuplicateCheck_() {
   );
 }
 
+function testDailyEodCacheWarmupTriggerDuplicateCheck_() {
+  const createdHandlers = [];
+  const scriptApp = buildMockScriptAppForTimeTrigger_([], createdHandlers);
+
+  installDailyEodCacheWarmupTrigger_({
+    scriptApp
+  });
+
+  assertEquals_(1, createdHandlers.length, 'Warmup trigger installer should create one trigger.');
+  assertEquals_(
+    'warmTodayEodReportCache',
+    createdHandlers[0].handlerName,
+    'Warmup trigger should point to the warmup handler.'
+  );
+  assertEquals_(1, createdHandlers[0].everyDays, 'Warmup trigger should run daily.');
+  assertEquals_(5, createdHandlers[0].atHour, 'Warmup trigger should run around 5am.');
+
+  installDailyEodCacheWarmupTrigger_({
+    scriptApp: buildMockScriptAppForTimeTrigger_([
+      { getHandlerFunction: () => 'handleSummaryRefreshEdit' },
+      { getHandlerFunction: () => 'warmTodayEodReportCache' }
+    ], createdHandlers)
+  });
+
+  assertEquals_(1, createdHandlers.length, 'Warmup trigger installer should avoid duplicate warmup triggers.');
+  assertEquals_(
+    true,
+    hasProjectTriggerForHandler_([
+      { getHandlerFunction: () => 'handleSummaryRefreshEdit' }
+    ], 'handleSummaryRefreshEdit'),
+    'Summary refresh trigger helper should remain separate.'
+  );
+  assertEquals_(
+    false,
+    hasProjectTriggerForHandler_([
+      { getHandlerFunction: () => 'handleSummaryRefreshEdit' }
+    ], 'warmTodayEodReportCache'),
+    'Summary refresh trigger should not count as a warmup trigger.'
+  );
+}
+
 function testSummarySendEmailEditFilter_() {
   const sendCol = CONFIG.summary.columns.length + 1;
 
@@ -1996,45 +2329,59 @@ function testSummarySendEmailEditFilter_() {
 
 function testSummarySendEmailSendsValidRowOnce_() {
   const result = runSummaryEmailServiceTest_({});
+  const ledgerEntry = getOnlySummaryEmailLedgerEntry_(result.ledger);
 
   assertEquals_('sent', result.sendResult.status, 'Valid row should send.');
   assertEquals_(1, result.sentEmails.length, 'Valid row should send exactly once.');
   assertEquals_(
     SummaryEmailService.STATUS_SENT,
-    result.sheet.getValueByHeader('Email Status'),
-    'Successful send should mark SENT.'
+    ledgerEntry.status,
+    'Successful send should mark SENT in the internal ledger.'
   );
-  assertTruthy_(result.sheet.getValueByHeader('Email Sent At'), 'Successful send should set sent timestamp.');
+  assertTruthy_(ledgerEntry.sentAt, 'Successful send should set sent timestamp in ledger.');
   assertEquals_(
     CONFIG.summaryEmail.recipient,
-    result.sheet.getValueByHeader('Email Sent To'),
-    'Successful send should record recipient.'
+    ledgerEntry.recipient,
+    'Successful send should record recipient in ledger.'
   );
   assertEquals_(true, result.sheet.getValueByHeader('Send Email'), 'Successful send should leave checkbox checked.');
-  assertEquals_('', result.sheet.getValueByHeader('Email Error'), 'Successful send should clear error.');
+  assertEquals_('', ledgerEntry.error, 'Successful send should clear ledger error.');
 }
 
-function testSummarySendEmailSentStatusPreventsDuplicate_() {
+function testSummarySendEmailSentLedgerPreventsDuplicate_() {
+  const sendKey = buildTestSummaryEmailSendKey_();
   const result = runSummaryEmailServiceTest_({
-    values: {
-      'Email Status': SummaryEmailService.STATUS_SENT
+    ledger: {
+      [sendKey]: {
+        sendKey,
+        status: SummaryEmailService.STATUS_SENT
+      }
     }
   });
 
-  assertEquals_('already_sent', result.sendResult.status, 'SENT status should skip send.');
-  assertEquals_(0, result.sentEmails.length, 'SENT status should not send.');
+  assertEquals_('already_sent', result.sendResult.status, 'SENT ledger status should skip send.');
+  assertEquals_(0, result.sentEmails.length, 'SENT ledger status should not send.');
   assertEquals_(true, result.sheet.getValueByHeader('Send Email'), 'Already sent row should remain checked.');
 }
 
-function testSummarySendEmailSentAtPreventsDuplicate_() {
+function testSummarySendEmailManualUncheckAfterSentRestored_() {
+  const sendKey = buildTestSummaryEmailSendKey_();
   const result = runSummaryEmailServiceTest_({
     values: {
-      'Email Sent At': new Date('2026-06-01T10:00:00+10:00')
+      'Send Email': false
+    },
+    ledger: {
+      [sendKey]: {
+        sendKey,
+        status: SummaryEmailService.STATUS_SENT,
+        sentAt: new Date('2026-06-01T10:00:00+10:00')
+      }
     }
   });
 
-  assertEquals_('already_sent', result.sendResult.status, 'Sent timestamp should skip send.');
-  assertEquals_(0, result.sentEmails.length, 'Sent timestamp should not send.');
+  assertEquals_('already_sent', result.sendResult.status, 'Sent ledger status should skip send.');
+  assertEquals_(0, result.sentEmails.length, 'Manual uncheck after sent should not resend.');
+  assertEquals_(true, result.sheet.getValueByHeader('Send Email'), 'Manual uncheck after sent should be restored.');
 }
 
 function testSummarySendEmailBlockingStatusPreventsDuplicate_() {
@@ -2044,15 +2391,19 @@ function testSummarySendEmailBlockingStatusPreventsDuplicate_() {
     SummaryEmailService.STATUS_SEND_FAILED_BLOCKED,
     'MANUAL_REVIEW'
   ].forEach(status => {
+    const sendKey = buildTestSummaryEmailSendKey_();
     const result = runSummaryEmailServiceTest_({
-      values: {
-        'Email Status': status
+      ledger: {
+        [sendKey]: {
+          sendKey,
+          status
+        }
       }
     });
 
     assertEquals_('blocked', result.sendResult.status, `${status} should block send.`);
     assertEquals_(0, result.sentEmails.length, `${status} should not send.`);
-    assertEquals_(true, result.sheet.getValueByHeader('Send Email'), `${status} should leave checkbox checked.`);
+    assertEquals_(false, result.sheet.getValueByHeader('Send Email'), `${status} should reset checkbox.`);
   });
 }
 
@@ -2065,18 +2416,19 @@ function testSummarySendEmailValidationFailureResets_() {
       'PDF': ''
     }
   });
+  const ledgerEntry = getOnlySummaryEmailLedgerEntry_(result.ledger);
 
   assertEquals_('validation_failed', result.sendResult.status, 'Missing PDF should fail validation.');
   assertEquals_(0, result.sentEmails.length, 'Validation failure should not send.');
   assertEquals_(
     SummaryEmailService.STATUS_VALIDATION_FAILED,
-    result.sheet.getValueByHeader('Email Status'),
-    'Validation failure should set status.'
+    ledgerEntry.status,
+    'Validation failure should set internal ledger status.'
   );
   assertContains_(
-    result.sheet.getValueByHeader('Email Error'),
+    ledgerEntry.error,
     'PDF Drive link',
-    'Validation failure should write PDF error.'
+    'Validation failure should write PDF error to ledger.'
   );
   assertEquals_(false, result.sheet.getValueByHeader('Send Email'), 'Validation failure should reset checkbox.');
 }
@@ -2091,9 +2443,9 @@ function testSummarySendEmailMissingPdfBlocks_() {
   assertEquals_('validation_failed', result.sendResult.status, 'Unreadable PDF should fail validation.');
   assertEquals_(0, result.sentEmails.length, 'Unreadable PDF should not send.');
   assertContains_(
-    result.sheet.getValueByHeader('Email Error'),
+    getOnlySummaryEmailLedgerEntry_(result.ledger).error,
     'missing file',
-    'Unreadable PDF should write Drive error.'
+    'Unreadable PDF should write Drive error to ledger.'
   );
   assertEquals_(false, result.sheet.getValueByHeader('Send Email'), 'Unreadable PDF should reset checkbox.');
 }
@@ -2139,17 +2491,18 @@ function testSummarySendEmailExceptionBlocksRetry_() {
       throw new Error('forced send failure');
     }
   });
+  const ledgerEntry = getOnlySummaryEmailLedgerEntry_(result.ledger);
 
   assertEquals_('send_failed_blocked', result.sendResult.status, 'Send exception should block retry.');
   assertEquals_(
     SummaryEmailService.STATUS_SEND_FAILED_BLOCKED,
-    result.sheet.getValueByHeader('Email Status'),
-    'Send exception should write blocked status.'
+    ledgerEntry.status,
+    'Send exception should write blocked ledger status.'
   );
   assertContains_(
-    result.sheet.getValueByHeader('Email Error'),
+    ledgerEntry.error,
     'forced send failure',
-    'Send exception should write error.'
+    'Send exception should write ledger error.'
   );
   assertEquals_(false, result.sheet.getValueByHeader('Send Email'), 'Send exception should reset checkbox.');
 }
@@ -2836,6 +3189,7 @@ function buildMockSummarySheet_(sheetName, headers) {
 function runSummaryEmailServiceTest_(options) {
   const settings = options || {};
   const sentEmails = [];
+  const ledger = settings.ledger || {};
   const sheet = buildMockSummaryEmailSheet_(settings);
 
   SummaryEmailService.setMailSenderForTest_(settings.mailSender || function(email) {
@@ -2847,11 +3201,13 @@ function runSummaryEmailServiceTest_(options) {
   SummaryEmailService.setSpreadsheetUrlForTest_(
     settings.spreadsheetUrl || 'https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit'
   );
+  SummaryEmailService.setLedgerForTest_(ledger);
 
   try {
     return {
       sheet,
       sentEmails,
+      ledger,
       sendResult: SummaryEmailService.sendSummaryRowEmail(
         sheet,
         settings.rowNumber || CONFIG.summary.headerRow + 1
@@ -2860,6 +3216,22 @@ function runSummaryEmailServiceTest_(options) {
   } finally {
     SummaryEmailService.resetTestDoubles_();
   }
+}
+
+function buildTestSummaryEmailSendKey_() {
+  return [
+    TEST_PREFIX + 'SUMMARY_EMAIL',
+    CONFIG.summaryEmail.recipient,
+    'PDF_FILE_ID_1234567890'
+  ].join('::');
+}
+
+function getOnlySummaryEmailLedgerEntry_(ledger) {
+  const keys = Object.keys(ledger || {});
+
+  assertEquals_(1, keys.length, 'Expected exactly one summary email ledger entry.');
+
+  return ledger[keys[0]];
 }
 
 function buildMockSummaryEmailSheet_(options) {
@@ -3012,6 +3384,251 @@ function buildMockPdfDriveFile_(fileId) {
     getMimeType: () => MimeType.PDF,
     getName: () => 'test.pdf',
     getBlob: () => blob
+  };
+}
+
+function buildMockEodReportCacheSheet_() {
+  return buildMockEodReportCacheSheets_().metadata;
+}
+
+function buildMockEodReportCacheSheets_() {
+  return {
+    metadata: buildMockSheetWithHeaders_([
+      'Cache Key',
+      'Report Key',
+      'Date Key',
+      'Source Message ID',
+      'Source Filename',
+      'Source Date',
+      'Cached At',
+      'Header Row',
+      'Headers JSON',
+      'Row Count',
+      'Status',
+      'Error'
+    ]),
+    rows: {
+      outstandingOrders: buildMockSheetWithHeaders_([
+        'Cache Key',
+        'Report Key',
+        'Date Key',
+        'Source Message ID',
+        'Source Filename',
+        'Source Date',
+        'Cached At',
+        'Report Row',
+        'Order No.',
+        'Customer Name',
+        'Carrier Code',
+        'Customer State',
+        'Search Criteria',
+        'Qty Ord',
+        'Order Type'
+      ]),
+      palletAndProductByMembers: buildMockSheetWithHeaders_([
+        'Cache Key',
+        'Report Key',
+        'Date Key',
+        'Source Message ID',
+        'Source Filename',
+        'Source Date',
+        'Cached At',
+        'Report Row',
+        'Bin Location',
+        'Child pallet no.',
+        'Original pallet no.',
+        'Owner',
+        'Member No',
+        'Product Code',
+        'Product Description',
+        'Vintage',
+        'Bottle Size'
+      ])
+    }
+  };
+}
+
+function buildMockSheetWithHeaders_(headers) {
+  const state = {
+    headers: headers.slice(),
+    appendRowCalls: 0,
+    setValuesCalls: 0
+  };
+  const sheet = {
+    dataRows: [],
+    getLastRow() {
+      return 1 + this.dataRows.length;
+    },
+    getLastColumn() {
+      return Math.max(
+        state.headers.length,
+        this.dataRows.reduce((max, row) => Math.max(max, row.length), 0)
+      );
+    },
+    getRange(row, col, rowCount, colCount) {
+      return {
+        getValues: () => {
+          const source = row === 1
+            ? [state.headers]
+            : sheet.dataRows.slice(row - 2, row - 2 + rowCount);
+
+          return source.map(sourceRow => {
+            const output = sourceRow.slice(col - 1, col - 1 + colCount);
+
+            while (output.length < colCount) {
+              output.push('');
+            }
+
+            return output;
+          });
+        },
+        setValues(values) {
+          state.setValuesCalls++;
+          values.forEach((valueRow, index) => {
+            if (row + index === 1) {
+              state.headers = valueRow.slice();
+              return;
+            }
+
+            sheet.dataRows[row - 2 + index] = valueRow.slice();
+          });
+        }
+      };
+    },
+    clearContents() {
+      state.headers = [];
+      this.dataRows.length = 0;
+    },
+    setFrozenRows() {},
+    appendRow(row) {
+      state.appendRowCalls++;
+      this.dataRows.push(row.slice());
+    },
+    get appendRowCalls() {
+      return state.appendRowCalls;
+    },
+    get setValuesCalls() {
+      return state.setValuesCalls;
+    }
+  };
+
+  return sheet;
+}
+
+function buildMockEodCsvReport_(reportKey, dateKey, options) {
+  const settings = options || {};
+  const isPalletReport = reportKey === 'palletAndProductByMembers';
+  const headers = settings.headers || (isPalletReport
+    ? [
+      'Bin Location',
+      'Child pallet no.',
+      'Original pallet no.',
+      'Owner',
+      'Member No',
+      'Product Code',
+      'Product Description',
+      'Vintage',
+      'Bottle Size'
+    ]
+    : [
+      'Order No.',
+      'Customer Name',
+      'Carrier Code',
+      'Customer State',
+      'Search Criteria',
+      'Qty Ord',
+      'Order Type'
+    ]);
+  const rows = settings.rows || (isPalletReport
+    ? [['A0101', 'C1234567', 'B1234567', 'ABCDE', 'M001', 'P001', 'Product One', '2020', '750ML']]
+    : [['ABCDE123', 'Same Customer', 'AP', 'VIC', 'BB&V1990&OB1234567', '1', 'OL']]);
+
+  return {
+    reportKey,
+    displayName: isPalletReport ? 'PALLET AND PRODUCT BY MEMBERS' : 'OUTSTANDING ORDERS',
+    filename: isPalletReport ? 'RP_Pallet_and_Product_by_Member.csv' : 'RP_OUTSTANDING_ORDERS.csv',
+    subject: isPalletReport
+      ? 'EOD Reports - RP_Pallet_and_Product_by_Member.csv'
+      : 'EOD Reports - RP_OUTSTANDING_ORDERS.csv',
+    messageId: `${reportKey}-MSG1`,
+    messageDate: new Date(`${dateKey}T09:00:00+10:00`),
+    dateKey,
+    headerRow: 3,
+    headers,
+    rows: rows.filter(row => EodReportCsvService.isReportCacheableRow_(reportKey, row, headers))
+  };
+}
+
+function buildWarmupSideEffectGuards_() {
+  const originals = [];
+  let sideEffectCount = 0;
+
+  function guard(target, key) {
+    if (!target || typeof target[key] !== 'function') {
+      return;
+    }
+
+    const original = target[key];
+    originals.push({
+      target,
+      key,
+      original
+    });
+    target[key] = function() {
+      sideEffectCount++;
+      throw new Error(`Unexpected warmup side effect: ${key}`);
+    };
+  }
+
+  guard(SummaryService, 'appendMissingSummaryRows');
+  guard(SheetService, 'appendPartPickRow');
+  guard(DedupeService, 'markProcessed');
+  guard(SummaryEmailService, 'sendSummaryRowFromEdit');
+  guard(GeminiService, 'extractPdf');
+  guard(DriveService, 'archivePdf');
+  guard(GmailService, 'buildSearchQuery');
+  guard(LabelService, 'setupLabels');
+
+  return {
+    count() {
+      return sideEffectCount;
+    },
+    restore() {
+      originals.forEach(entry => {
+        entry.target[entry.key] = entry.original;
+      });
+    }
+  };
+}
+
+function buildMockScriptAppForTimeTrigger_(triggers, createdHandlers) {
+  return {
+    getProjectTriggers: () => triggers,
+    newTrigger(handlerName) {
+      const created = {
+        handlerName,
+        everyDays: 0,
+        atHour: -1
+      };
+
+      return {
+        timeBased() {
+          return this;
+        },
+        everyDays(days) {
+          created.everyDays = days;
+          return this;
+        },
+        atHour(hour) {
+          created.atHour = hour;
+          return this;
+        },
+        create() {
+          createdHandlers.push(created);
+          return created;
+        }
+      };
+    }
   };
 }
 
@@ -3351,7 +3968,8 @@ function buildMockOutstandingOrdersReport_(rows) {
       'Carrier Code',
       'Customer State',
       'Search Criteria',
-      'Qty Ord'
+      'Qty Ord',
+      'Order Type'
     ],
     rows
   };
@@ -3364,7 +3982,8 @@ function buildOutstandingOrdersCsvRow_(row) {
     row.carrierCode || 'AP',
     row.customerState || 'VIC',
     row.searchCriteria || 'BB&V1990&OB1234567',
-    row.qtyOrd == null ? '' : row.qtyOrd
+    row.qtyOrd == null ? '' : row.qtyOrd,
+    row.orderType || 'OL'
   ];
 }
 
