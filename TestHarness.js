@@ -2389,58 +2389,102 @@ function testSummarySetupMigratesProductColumns_() {
     .getRange(CONFIG.summary.headerRow + 1, oldHeaders.indexOf('B Number') + 1)
     .setNote('Keep B note');
 
-  SummaryService.setupSummaryHeaders_(sheet);
-  SummaryService.formatSummary_(sheet);
+  const restoreConditionalFormatBuilder = stubConditionalFormatRuleBuilderForTest_();
 
-  const headers = sheet.getHeaderValues();
-  const expectedArea = [
-    'Location',
-    'C Number',
-    'B Number',
-    'Product Code',
-    'Product Description',
-    'Vintage',
-    'Bottle Size',
-    'Date Completed',
-    'SLA',
-    'Refresh EOD',
-    'Send Email',
-    'Notes'
-  ];
-  const locationIndex = headers.indexOf('Location');
+  try {
+    SummaryService.setupSummaryHeaders_(sheet);
+    SummaryService.formatSummary_(sheet);
 
-  expectedArea.forEach((header, offset) => {
+    const headers = sheet.getHeaderValues();
+    const expectedArea = [
+      'Location',
+      'C Number',
+      'B Number',
+      'Product Code',
+      'Product Description',
+      'Vintage',
+      'Bottle Size',
+      'Date Completed',
+      'SLA',
+      'Refresh EOD',
+      'Send Email',
+      'Notes'
+    ];
+    const locationIndex = headers.indexOf('Location');
+
+    expectedArea.forEach((header, offset) => {
+      assertEquals_(
+        header,
+        headers[locationIndex + offset],
+        `${header} should be in the migrated Summary order.`
+      );
+    });
+
+    assertEquals_('B123', sheet.getDataValueByHeader('B Number'), 'B Number data must stay put.');
+    assertEquals_('', sheet.getDataValueByHeader('Product Code'), 'Inserted Product Code should be blank.');
+    assertEquals_('', sheet.getDataValueByHeader('Product Description'), 'Inserted Product Description should be blank.');
+    assertEquals_('', sheet.getDataValueByHeader('Vintage'), 'Inserted Vintage should be blank.');
+    assertEquals_('', sheet.getDataValueByHeader('Bottle Size'), 'Inserted Bottle Size should be blank.');
+    assertEquals_('2026-06-02', sheet.getDataValueByHeader('Date Completed'), 'Date Completed data should shift right.');
+    assertEquals_(1.5, sheet.getDataValueByHeader('SLA'), 'SLA data should shift right.');
+    assertEquals_(true, sheet.getDataValueByHeader('Refresh EOD'), 'Refresh EOD data should shift right.');
+    assertEquals_(false, sheet.getDataValueByHeader('Send Email'), 'Send Email data should shift right.');
+    assertEquals_('manual note column', sheet.getDataValueByHeader('Notes'), 'Later user columns must be preserved.');
+    assertEquals_('Keep B note', sheet.getNoteByHeader('B Number'), 'B Number notes must stay intact.');
     assertEquals_(
-      header,
-      headers[locationIndex + offset],
-      `${header} should be in the migrated Summary order.`
+      SheetService.dateNumberFormat,
+      sheet.getNumberFormatByHeader('Date Completed'),
+      'Date Completed should keep date formatting after migration.'
     );
-  });
+    assertEquals_('0.#', sheet.getNumberFormatByHeader('SLA'), 'SLA should keep number formatting after migration.');
+    assertEquals_(
+      SpreadsheetApp.DataValidationCriteria.CHECKBOX,
+      sheet.getValidationTypeByHeader('Refresh EOD'),
+      'Refresh EOD checkbox validation should be on the migrated column.'
+    );
+    assertEquals_(
+      SpreadsheetApp.DataValidationCriteria.CHECKBOX,
+      sheet.getValidationTypeByHeader('Send Email'),
+      'Send Email checkbox validation should be on the migrated column.'
+    );
 
-  assertEquals_('B123', sheet.getDataValueByHeader('B Number'), 'B Number data must stay put.');
-  assertEquals_('', sheet.getDataValueByHeader('Product Code'), 'Inserted Product Code should be blank.');
-  assertEquals_('2026-06-02', sheet.getDataValueByHeader('Date Completed'), 'Date Completed data should shift right.');
-  assertEquals_(1.5, sheet.getDataValueByHeader('SLA'), 'SLA data should shift right.');
-  assertEquals_(true, sheet.getDataValueByHeader('Refresh EOD'), 'Refresh EOD data should shift right.');
-  assertEquals_(false, sheet.getDataValueByHeader('Send Email'), 'Send Email data should shift right.');
-  assertEquals_('manual note column', sheet.getDataValueByHeader('Notes'), 'Later user columns must be preserved.');
-  assertEquals_('Keep B note', sheet.getNoteByHeader('B Number'), 'B Number notes must stay intact.');
-  assertEquals_(
-    SheetService.dateNumberFormat,
-    sheet.getNumberFormatByHeader('Date Completed'),
-    'Date Completed should keep date formatting after migration.'
-  );
-  assertEquals_('0.#', sheet.getNumberFormatByHeader('SLA'), 'SLA should keep number formatting after migration.');
-  assertEquals_(
-    SpreadsheetApp.DataValidationCriteria.CHECKBOX,
-    sheet.getValidationTypeByHeader('Refresh EOD'),
-    'Refresh EOD checkbox validation should be on the migrated column.'
-  );
-  assertEquals_(
-    SpreadsheetApp.DataValidationCriteria.CHECKBOX,
-    sheet.getValidationTypeByHeader('Send Email'),
-    'Send Email checkbox validation should be on the migrated column.'
-  );
+    SummaryService.setupSummaryHeaders_(sheet);
+    SummaryService.formatSummary_(sheet);
+
+    const idempotentHeaders = sheet.getHeaderValues();
+    expectedArea.forEach((header, offset) => {
+      assertEquals_(
+        header,
+        idempotentHeaders[locationIndex + offset],
+        `${header} should stay in the migrated Summary order after repeated setup.`
+      );
+    });
+
+    [
+      'Product Code',
+      'Product Description',
+      'Vintage',
+      'Bottle Size',
+      'Date Completed',
+      'SLA',
+      'Refresh EOD',
+      'Send Email'
+    ].forEach(header => {
+      assertEquals_(
+        1,
+        idempotentHeaders.filter(value => value === header).length,
+        `${header} should not be duplicated by repeated migration setup.`
+      );
+    });
+
+    assertEquals_('2026-06-02', sheet.getDataValueByHeader('Date Completed'), 'Date Completed data should survive repeated setup.');
+    assertEquals_(1.5, sheet.getDataValueByHeader('SLA'), 'SLA data should survive repeated setup.');
+    assertEquals_(true, sheet.getDataValueByHeader('Refresh EOD'), 'Refresh EOD data should survive repeated setup.');
+    assertEquals_(false, sheet.getDataValueByHeader('Send Email'), 'Send Email data should survive repeated setup.');
+    assertEquals_('manual note column', sheet.getDataValueByHeader('Notes'), 'Later user columns should survive repeated setup.');
+  } finally {
+    restoreConditionalFormatBuilder();
+  }
 }
 
 function testSummarySetupMigrationIdempotent_() {
@@ -3986,6 +4030,84 @@ function buildMockMigratableRange_(sheet, state, row, col, rowCount, colCount) {
       return this;
     }
   };
+}
+
+function stubConditionalFormatRuleBuilderForTest_() {
+  const originalNewConditionalFormatRule = SpreadsheetApp.newConditionalFormatRule;
+
+  SpreadsheetApp.newConditionalFormatRule = function() {
+    return buildMockConditionalFormatRuleBuilder_();
+  };
+
+  return function restore() {
+    SpreadsheetApp.newConditionalFormatRule = originalNewConditionalFormatRule;
+  };
+}
+
+function buildMockConditionalFormatRuleBuilder_() {
+  const state = {
+    background: '',
+    condition: null,
+    ranges: []
+  };
+  const builder = {
+    whenFormulaSatisfied(formula) {
+      state.condition = {
+        type: 'formula',
+        value: formula
+      };
+      return this;
+    },
+    whenNumberLessThanOrEqualTo(value) {
+      state.condition = {
+        type: 'number_lte',
+        value
+      };
+      return this;
+    },
+    whenNumberBetween(min, max) {
+      state.condition = {
+        type: 'number_between',
+        min,
+        max
+      };
+      return this;
+    },
+    whenNumberGreaterThan(value) {
+      state.condition = {
+        type: 'number_gt',
+        value
+      };
+      return this;
+    },
+    setBackground(color) {
+      state.background = color;
+      return this;
+    },
+    setRanges(ranges) {
+      state.ranges = ranges || [];
+      return this;
+    },
+    build() {
+      const ranges = state.ranges.slice();
+      const condition = state.condition;
+      const background = state.background;
+
+      return {
+        getRanges() {
+          return ranges;
+        },
+        getBooleanCondition() {
+          return condition;
+        },
+        getBackground() {
+          return background;
+        }
+      };
+    }
+  };
+
+  return builder;
 }
 
 function buildMockSummaryRefreshEditEvent_(options) {
