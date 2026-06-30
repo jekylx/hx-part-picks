@@ -95,10 +95,17 @@ const PalletAndProductByMembersEodReportService = {
     const cMatches = cNumber ? lookup.byCNumber[cNumber] || [] : [];
     const bMatches = bNumber ? lookup.byBNumber[bNumber] || [] : [];
     const uniqueCMatch = this.getUniquePalletMatch_(cMatches);
-    const uniqueBMatch = this.getUniquePalletMatchForBNumber_(bMatches);
+    const ownerScopedBMatches = this.getBNumberMatchesForOwner_(lookup, bNumber, owner);
+    const uniqueBMatch = this.getUniquePalletMatchForBNumberAndOwner_(
+      ownerScopedBMatches
+    );
 
     if (uniqueBMatch && uniqueBMatch.cNumber && uniqueBMatch.cNumber !== cNumber) {
-      const bCorrectionGate = this.getBNumberCorrectionGate_(bMatches, owner);
+      const bCorrectionGate = this.getBNumberCorrectionGate_(
+        lookup,
+        bNumber,
+        owner
+      );
 
       if (bCorrectionGate.allowed) {
         context.setValue(summaryColumns.cNumber, rowIndex, uniqueBMatch.cNumber);
@@ -164,6 +171,12 @@ const PalletAndProductByMembersEodReportService = {
     }
 
     if (bNumber && bMatches.length > 0 && !uniqueBMatch) {
+      const bCorrectionGate = this.getBNumberCorrectionGate_(
+        lookup,
+        bNumber,
+        owner
+      );
+
       this.applyMemberAndProductInfo_(
         context,
         validationRows,
@@ -178,7 +191,7 @@ const PalletAndProductByMembersEodReportService = {
       const note = this.buildBlockedBNumberCorrectionNote_(
         bNumber,
         owner,
-        'ambiguousOwner'
+        bCorrectionGate.reason
       );
 
       result.blocked++;
@@ -277,8 +290,15 @@ const PalletAndProductByMembersEodReportService = {
       return;
     }
 
-    const bMatches = lookup.byBNumber[normalizedBNumber] || [];
-    const product = this.getUniqueProductForBNumber_(bMatches);
+    if (!owner) {
+      return;
+    }
+
+    const memberMatches = lookup.byBNumberAndOwner[
+      EodReportNormalisationService.bOwnerKey(normalizedBNumber, owner)
+    ] || [];
+
+    const product = this.getUniqueProductForBNumber_(memberMatches);
 
     if (product) {
       context.setNote(
@@ -287,14 +307,6 @@ const PalletAndProductByMembersEodReportService = {
         EodReportNormalisationService.buildProductNote(product)
       );
     }
-
-    if (!owner) {
-      return;
-    }
-
-    const memberMatches = lookup.byBNumberAndOwner[
-      EodReportNormalisationService.bOwnerKey(normalizedBNumber, owner)
-    ] || [];
 
     const memberMatch = this.getUniqueMemberForBNumberAndOwner_(memberMatches);
 
@@ -593,7 +605,20 @@ const PalletAndProductByMembersEodReportService = {
     return records.length === 1 ? records[0] : null;
   },
 
-  getBNumberCorrectionGate_(matches, owner) {
+  getBNumberMatchesForOwner_(lookup, bNumber, owner) {
+    const normalizedBNumber = EodReportNormalisationService.normalizeBNumber(bNumber);
+    const normalizedOwner = EodReportNormalisationService.normalizeOwner(owner);
+
+    if (!lookup || !normalizedBNumber || !normalizedOwner) {
+      return [];
+    }
+
+    return lookup.byBNumberAndOwner[
+      EodReportNormalisationService.bOwnerKey(normalizedBNumber, normalizedOwner)
+    ] || [];
+  },
+
+  getBNumberCorrectionGate_(lookup, bNumber, owner) {
     if (!owner) {
       return {
         allowed: false,
@@ -601,20 +626,21 @@ const PalletAndProductByMembersEodReportService = {
       };
     }
 
-    const uniqueMatch = this.getUniquePalletMatchForBNumber_(matches);
+    const matches = this.getBNumberMatchesForOwner_(lookup, bNumber, owner);
+
+    if (matches.length === 0) {
+      return {
+        allowed: false,
+        reason: 'missingBOwnerRow'
+      };
+    }
+
+    const uniqueMatch = this.getUniquePalletMatchForBNumberAndOwner_(matches);
 
     if (!uniqueMatch) {
       return {
         allowed: false,
-        reason: 'ambiguousOwner'
-      };
-    }
-
-    if (uniqueMatch.owner !== owner) {
-      return {
-        allowed: false,
-        reason: 'ownerMismatch',
-        matchOwner: uniqueMatch.owner
+        reason: 'conflictingOwnerRows'
       };
     }
 
@@ -631,8 +657,8 @@ const PalletAndProductByMembersEodReportService = {
 
     if (reason === 'missingOwner') {
       return [
-        `${this.reportConfig_().displayName}: C/Location correction blocked for B ${normalizedBNumber}.`,
-        'Summary Owner is missing, so B Number owner could not confirm the correction.'
+        `${this.reportConfig_().displayName}: blocked C/location correction; B has multiple owners globally but no confirmed Outstanding Orders owner was available.`,
+        `B: ${normalizedBNumber || '(blank)'}`
       ].join('\n');
     }
 
@@ -643,9 +669,21 @@ const PalletAndProductByMembersEodReportService = {
       ].join('\n');
     }
 
+    if (reason === 'missingBOwnerRow') {
+      return [
+        `${this.reportConfig_().displayName}: blocked C/location correction; no Pallet/Product row found for B ${normalizedBNumber || '(blank)'} and Owner ${displayOwner}.`
+      ].join('\n');
+    }
+
+    if (reason === 'conflictingOwnerRows') {
+      return [
+        `${this.reportConfig_().displayName}: blocked C/location correction; conflicting C/location rows found for B ${normalizedBNumber || '(blank)'} and Owner ${displayOwner}.`
+      ].join('\n');
+    }
+
     return [
-      `${this.reportConfig_().displayName}: C/Location correction blocked for B ${normalizedBNumber}.`,
-      'B Number ownership is ambiguous, so B Number owner could not confirm the correction.'
+      `${this.reportConfig_().displayName}: blocked C/location correction for B ${normalizedBNumber || '(blank)'}.`,
+      `Reason: ${reason || 'unknown'}`
     ].join('\n');
   },
 
@@ -711,6 +749,32 @@ const PalletAndProductByMembersEodReportService = {
         match.bNumber || '',
         match.location || '',
         match.owner || ''
+      ].join('::');
+
+      if (unique[key]) {
+        return;
+      }
+
+      unique[key] = true;
+      records.push(match);
+    });
+
+    return records.length === 1 ? records[0] : null;
+  },
+
+  getUniquePalletMatchForBNumberAndOwner_(matches) {
+    if (!matches || matches.length === 0) {
+      return null;
+    }
+
+    const unique = {};
+    const records = [];
+
+    matches.forEach(match => {
+      const key = [
+        match.cNumber || '',
+        match.bNumber || '',
+        match.location || ''
       ].join('::');
 
       if (unique[key]) {

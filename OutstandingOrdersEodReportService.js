@@ -107,25 +107,14 @@ const OutstandingOrdersEodReportService = {
       return;
     }
 
-    const ownerCheck = this.getBNumberOwnerConfirmation_(context, rowIndex, dateKey, match.owner);
-
-    if (ownerCheck.status === 'owner_mismatch') {
-      EodReportValidationService.noMatch(
-        validationRows,
-        rowIndex,
-        `${reportConfig.displayName}: correction blocked: matched order owner ${match.owner || '(blank)'} does not match B Number owner ${ownerCheck.owner || '(blank)'}.`
-      );
-      result.blocked++;
-      return;
-    }
-
-    if (ownerCheck.status !== 'confirmed') {
+    if (!EodReportNormalisationService.normalizeOwner(match.owner)) {
       EodReportValidationService.noMatch(
         validationRows,
         rowIndex,
         [
-          `${reportConfig.displayName}: correction blocked: B Number owner could not confirm order owner.`,
-          `Reason: ${ownerCheck.status || 'unknown'}`
+          `${reportConfig.displayName}: correction blocked: matched Outstanding Orders line has no usable Owner.`,
+          `Order No: ${orderNumber}`,
+          `B Number: ${bNumber}`
         ].join('\n')
       );
       result.blocked++;
@@ -201,18 +190,6 @@ const OutstandingOrdersEodReportService = {
     }
 
     return false;
-  },
-
-  getBNumberOwnerConfirmation_(context, rowIndex, dateKey, orderOwner) {
-    const palletConfig = CONFIG.eodReports.reports.palletAndProductByMembers;
-    const bNumber = context.value(palletConfig.summaryColumns.bNumber, rowIndex);
-    const lookup = PalletAndProductByMembersEodReportService.getLookupForDate(dateKey);
-
-    return PalletAndProductByMembersEodReportService.confirmOwnerForBNumber(
-      lookup,
-      bNumber,
-      orderOwner
-    );
   },
 
   applyGuardedFieldCorrection_(context, validationRows, rowIndex, columnName, label, beforeValue, reportValue, validator, result) {

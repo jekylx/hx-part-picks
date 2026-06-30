@@ -82,7 +82,7 @@ This repo has no `package.json` and no local test runner. Apps Script tests run 
 2. Run `node --check` on changed JS files.
 3. Review the diff.
 4. After explicit approval, run `clasp push`.
-5. In Apps Script, run `runLocalTests()`.
+5. In Apps Script, run `runLocalTests()`. If the full suite hits the Apps Script execution limit, run `runLocalTestsPart1()` and `runLocalTestsPart2()` instead.
 6. Smoke test with a controlled printer email/PDF and inspect `Processing Log`, `Part Picks`, `Part Pick Summary`, `_Processed Keys`, Drive archive, and Gmail labels.
 
 ## Deployment Checklist
@@ -92,7 +92,7 @@ This repo has no `package.json` and no local test runner. Apps Script tests run 
 - Run `node --check` on changed JS files.
 - Run `git diff --check`.
 - Get explicit user approval for `clasp push`.
-- After push, run `runLocalTests()`.
+- After push, run `runLocalTests()` or, if needed for Apps Script execution limits, `runLocalTestsPart1()` and `runLocalTestsPart2()`.
 - Run `setup()` only when setup/schema/folder changes require it.
 - Do not run `processPrinterEmails()` manually against production Gmail without explicit approval.
 - Confirm the processor, Summary edit, and optional EOD cache warmup triggers are installed and not duplicated.

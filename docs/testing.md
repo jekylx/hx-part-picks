@@ -3,6 +3,17 @@
 ## Apps Script Tests
 
 Run `runLocalTests()` inside Apps Script after an approved `clasp push`.
+The harness reuses one real sheet setup per suite execution; most tests use
+mocks/stubs and do not repeat the expensive setup/protection path.
+
+If the full suite approaches the Apps Script execution limit, run the split
+entry points instead:
+
+- `runLocalTestsPart1()` covers core, EOD, and sheet setup/protection tests.
+- `runLocalTestsPart2()` covers summary, processor guard, and summary email tests.
+- More focused suites are available as `runCoreLocalTests()`,
+  `runEodLocalTests()`, `runSheetSetupLocalTests()`, `runSummaryLocalTests()`,
+  and `runSummaryEmailLocalTests()`.
 
 The test harness:
 
@@ -31,7 +42,7 @@ The summary email tests do not send real emails and do not read real Drive files
 Add focused tests to `TestHarness.js`:
 
 1. Create a `testSomething_()` function.
-2. Register it in `runLocalTests()` with `runTest_('Name', testSomething_, results)`.
+2. Register it in `getLocalTestCases_()` with a test name, function, and suite.
 3. Prefer mock contexts and lookup builders over live Gmail/Drive/Gemini calls.
 4. Use existing assertion helpers.
 5. Keep production data out of tests.

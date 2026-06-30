@@ -164,10 +164,24 @@ const SheetService = {
     summarySheet.showSheet();
 
     ss.getSheets().forEach(sheet => {
-      if (sheet.getName() !== CONFIG.summary.sheetName) {
+      if (this.shouldHideImplementationSheet_(sheet.getName())) {
         sheet.hideSheet();
+      } else {
+        sheet.showSheet();
       }
     });
+  },
+
+  shouldHideImplementationSheet_(sheetName) {
+    const visibleInternalSheets = [
+      CONFIG.sheets.eodReportCacheSheetName,
+      CONFIG.sheets.eodOutstandingOrdersCacheSheetName,
+      CONFIG.sheets.eodPalletProductCacheSheetName,
+      CONFIG.sheets.summaryEmailLedgerSheetName
+    ];
+
+    return sheetName !== CONFIG.summary.sheetName &&
+      visibleInternalSheets.indexOf(sheetName) === -1;
   },
 
   setupSummaryEmailLedger_(ss) {

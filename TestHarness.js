@@ -21,94 +21,47 @@
 
 const TEST_PREFIX = 'TEST::';
 const TEST_RESULTS_SHEET_NAME = 'Test Results';
+let localTestSetupComplete_ = false;
 
 function runLocalTests() {
+  runLocalTestSuite_('All local tests', getLocalTestCases_());
+}
+
+function runCoreLocalTests() {
+  runLocalTestSuite_('Core local tests', getLocalTestCases_('core'));
+}
+
+function runSheetSetupLocalTests() {
+  runLocalTestSuite_('Sheet setup local tests', getLocalTestCases_('sheet_setup'));
+}
+
+function runEodLocalTests() {
+  runLocalTestSuite_('EOD local tests', getLocalTestCases_('eod'));
+}
+
+function runSummaryEmailLocalTests() {
+  runLocalTestSuite_('Summary email local tests', getLocalTestCases_('summary_email'));
+}
+
+function runSummaryLocalTests() {
+  runLocalTestSuite_('Summary local tests', getLocalTestCases_('summary'));
+}
+
+function runLocalTestsPart1() {
+  runLocalTestSuite_('Local tests part 1', getLocalTestCases_('part1'));
+}
+
+function runLocalTestsPart2() {
+  runLocalTestSuite_('Local tests part 2', getLocalTestCases_('part2'));
+}
+
+function runLocalTestSuite_(suiteName, testCases) {
   const results = [];
 
+  localTestSetupComplete_ = false;
   cleanupTestRows();
 
-  runTest_('Config has required blocks', testConfigHasRequiredBlocks_, results);
-  runTest_('Summary config has email columns with Send Email at end', testSummaryEmailConfig_, results);
-  runTest_('Gmail query is correct', testGmailQuery_, results);
-  runTest_('B number OCR normalisation handles leading B misreads', testBNumberOcrNormalisation_, results);
-  runTest_('Order number normalisation accepts variable length', testOrderNumberNormalisation_, results);
-  runTest_('Outstanding Orders order parsing accepts variable length', testOutstandingOrdersOrderParsing_, results);
-  runTest_('Outstanding Orders Search Criteria B parsing works', testOutstandingOrdersSearchCriteriaBParsing_, results);
-  runTest_('EOD member normalisation helper works', testEodMemberNormalisation_, results);
-  runTest_('EOD owner normalisation allows alphanumeric owners', testEodOwnerNormalisation_, results);
-  runTest_('EOD carrier validation helper works', testEodCarrierValidation_, results);
-  runTest_('EOD state validation helper works', testEodStateValidation_, results);
-  runTest_('EOD customer name normalisation helper works', testEodCustomerNameNormalisation_, results);
-  runTest_('EOD report header normalisation helper works', testEodReportHeaderNormalisation_, results);
-  runTest_('EOD report sheet cache writes today as rows', testEodReportSheetCacheWritesToday_, results);
-  runTest_('EOD report sheet cache skips non-today writes', testEodReportSheetCacheSkipsNonTodayWrites_, results);
-  runTest_('EOD report runtime cache covers repeated reads', testEodReportRuntimeCache_, results);
-  runTest_('EOD report cache does not store row JSON blobs', testEodReportCacheDoesNotStoreRowJsonBlobs_, results);
-  runTest_('Outstanding Orders cache keeps OL rows only', testOutstandingOrdersCacheKeepsOlRowsOnly_, results);
-  runTest_('Outstanding Orders lookup uses OL rows only', testOutstandingOrdersLookupUsesOlRowsOnly_, results);
-  runTest_('Pallet/Product cache keeps all rows', testPalletProductCacheKeepsAllRows_, results);
-  runTest_('EOD report warmup caches today reports only', testWarmTodayEodReportCache_, results);
-  runTest_('EOD date helpers work', testEodDateHelpers_, results);
-  runTest_('EOD lookup key helpers work', testEodLookupKeyHelpers_, results);
-  runTest_('EOD result counters include blocked', testEodResultCountersIncludeBlocked_, results);
-  runTest_('EOD result formatting includes blocked', testEodResultFormattingIncludesBlocked_, results);
-  runTest_('Outstanding Orders customer correction requires B owner confirmation', testOutstandingOrdersCustomerOwnerGate_, results);
-  runTest_('Outstanding Orders blocks customer correction without B owner confirmation', testOutstandingOrdersCustomerOwnerGateBlocks_, results);
-  runTest_('Outstanding Orders guards carrier and state corrections', testOutstandingOrdersCarrierStateGuards_, results);
-  runTest_('Outstanding Orders groups by Order and Search Criteria B Number', testOutstandingOrdersGroupsByOrderAndBNumber_, results);
-  runTest_('Outstanding Orders summary row matches correct Order+B line', testOutstandingOrdersSummaryMatchesCorrectOrderBLine_, results);
-  runTest_('Outstanding Orders repeated same-B rows sum quantity', testOutstandingOrdersRepeatedSameBQty_, results);
-  runTest_('Outstanding Orders canonical identity avoids false ambiguity', testOutstandingOrdersCanonicalIdentityNotAmbiguous_, results);
-  runTest_('Outstanding Orders ambiguous same-B group blocks corrections', testOutstandingOrdersAmbiguousGroupBlocks_, results);
-  runTest_('Outstanding Orders canonical identity detects true ambiguity', testOutstandingOrdersCanonicalIdentityAmbiguous_, results);
-  runTest_('Outstanding Orders missing B match blocks corrections', testOutstandingOrdersMissingBMatchBlocks_, results);
-  runTest_('Outstanding Orders does not fill from another same-order line', testOutstandingOrdersDoesNotFillFromSameOrderOtherB_, results);
-  runTest_('Pallet/Product exact C+B match sets Location', testPalletProductExactMatchSetsLocation_, results);
-  runTest_('Pallet/Product exact C+B match fills Member', testPalletProductExactMatchFillsMember_, results);
-  runTest_('Pallet/Product B owner match corrects C and Location', testPalletProductBMatchOwnerGateCorrects_, results);
-  runTest_('Pallet/Product B owner mismatch blocks C and Location correction', testPalletProductBMatchOwnerMismatchBlocks_, results);
-  runTest_('Pallet/Product missing owner blocks B correction', testPalletProductBMatchMissingOwnerBlocks_, results);
-  runTest_('Pallet/Product ambiguous B ownership blocks correction', testPalletProductBMatchAmbiguousOwnerBlocks_, results);
-  runTest_('Pallet/Product C cannot correct trusted B Number', testPalletProductCMatchDoesNotCorrectB_, results);
-  runTest_('Pallet/Product C-only evidence does not set Location', testPalletProductCOnlyEvidenceDoesNotSetLocation_, results);
-  runTest_('Pallet/Product mismatch does not overwrite Location', testPalletProductMismatchDoesNotOverwriteLocation_, results);
-  runTest_('Pallet/Product note requires unique product tuple', testPalletProductNoteRequiresUniqueProduct_, results);
-  runTest_('Pallet/Product Member requires unique B and Owner match', testPalletProductMemberRequiresUniqueBAndOwner_, results);
-  runTest_('Prompt contains raw extraction rules', testPromptRules_, results);
-  runTest_('Sheet setup creates expected sheets', testSheetSetup_, results);
-  runTest_('Sheet setup protects implementation sheets', testSheetSetupProtectsImplementationSheets_, results);
-  runTest_('Sheet protection helper is idempotent', testSheetProtectionHelperIdempotent_, results);
-  runTest_('Summary sheet removes only HX internal protection', testSummaryProtectionCleanup_, results);
-  runTest_('Summary setup applies Refresh EOD checkbox validation', testSummaryCheckboxValidation_, results);
-  runTest_('Summary setup applies Send Email checkbox validation', testSummarySendEmailCheckboxValidation_, results);
-  runTest_('Summary refresh edit handler filters edits strictly', testSummaryRefreshEditFilter_, results);
-  runTest_('Summary refresh edit handler refreshes checked rows', testSummaryRefreshEditHandlerCallsRefresh_, results);
-  runTest_('Summary refresh edit handler resets checkbox after failure', testSummaryRefreshEditHandlerResetsAfterFailure_, results);
-  runTest_('Summary refresh trigger duplicate check works', testSummaryRefreshTriggerDuplicateCheck_, results);
-  runTest_('Daily EOD cache warmup trigger duplicate check works', testDailyEodCacheWarmupTriggerDuplicateCheck_, results);
-  runTest_('Summary send email edit handler filters edits strictly', testSummarySendEmailEditFilter_, results);
-  runTest_('Summary send email handler sends valid row once', testSummarySendEmailSendsValidRowOnce_, results);
-  runTest_('Summary send email ledger prevents duplicate', testSummarySendEmailSentLedgerPreventsDuplicate_, results);
-  runTest_('Summary send email manual uncheck after sent is restored', testSummarySendEmailManualUncheckAfterSentRestored_, results);
-  runTest_('Summary send email blocking status prevents duplicate', testSummarySendEmailBlockingStatusPreventsDuplicate_, results);
-  runTest_('Summary send email validation failure resets checkbox', testSummarySendEmailValidationFailureResets_, results);
-  runTest_('Summary send email missing PDF blocks send', testSummarySendEmailMissingPdfBlocks_, results);
-  runTest_('Summary send email subject uses placeholders', testSummarySendEmailSubjectPlaceholders_, results);
-  runTest_('Summary send email body includes links', testSummarySendEmailBodyIncludesLinks_, results);
-  runTest_('Summary send email attaches PDF blob', testSummarySendEmailAttachesPdfBlob_, results);
-  runTest_('Summary send email exception records blocked state', testSummarySendEmailExceptionBlocksRetry_, results);
-  runTest_('Coordinator refresh processes exactly one summary row', testCoordinatorRefreshProcessesOneRow_, results);
-  runTest_('Coordinator refresh does not append summary rows', testCoordinatorRefreshDoesNotAppend_, results);
-  runTest_('Coordinator refresh uses current summary row values', testCoordinatorRefreshUsesCurrentRowValues_, results);
-  runTest_('Raw row append keeps raw values', testAppendMockRawRow_, results);
-  runTest_('Repair helper appends existing raw rows', testRepairAppendMissingSummaryRows_, results);
-  runTest_('Repair helper ignores inflated summary last row', testRepairAppendIgnoresInflatedSummaryLastRow_, results);
-  runTest_('Processor appends summary rows after thread failure', testProcessorAppendsSummaryAfterThreadFailure_, results);
-  runTest_('Summary append ignores inflated last row', testSummaryAppendIgnoresInflatedLastRow_, results);
-  runTest_('Summary appends missing rows only', testSummaryAppendOnly_, results);
-  runTest_('Batch and page processing keys are stable and unique', testPageProcessingKey_, results);
-  runTest_('Legacy page key does not skip whole batch', testLegacyPageKeyDoesNotSkipBatch_, results);
-  runTest_('PDF processor health endpoint works', testPdfProcessorHealth_, results);
+  testCases.forEach(testCase => runTest_(testCase.name, testCase.fn, results));
 
   writeTestResults_(results);
 
@@ -118,7 +71,126 @@ function runLocalTests() {
     throw new Error(`${failed.length} test(s) failed. Check "${TEST_RESULTS_SHEET_NAME}" sheet.`);
   }
 
-  Logger.log(`All ${results.length} local tests passed.`);
+  Logger.log(`${suiteName}: all ${results.length} local tests passed.`);
+}
+
+function getLocalTestCases_(suite) {
+  const allTests = [
+    { name: 'Config has required blocks', fn: testConfigHasRequiredBlocks_, suite: 'core' },
+    { name: 'Summary config has email columns with Send Email at end', fn: testSummaryEmailConfig_, suite: 'core' },
+    { name: 'Gmail query is correct', fn: testGmailQuery_, suite: 'core' },
+    { name: 'B number OCR normalisation handles leading B misreads', fn: testBNumberOcrNormalisation_, suite: 'core' },
+    { name: 'Order number normalisation accepts variable length', fn: testOrderNumberNormalisation_, suite: 'core' },
+    { name: 'Outstanding Orders order parsing accepts variable length', fn: testOutstandingOrdersOrderParsing_, suite: 'eod' },
+    { name: 'Outstanding Orders Search Criteria B parsing works', fn: testOutstandingOrdersSearchCriteriaBParsing_, suite: 'eod' },
+    { name: 'EOD member normalisation helper works', fn: testEodMemberNormalisation_, suite: 'eod' },
+    { name: 'EOD owner normalisation allows alphanumeric owners', fn: testEodOwnerNormalisation_, suite: 'eod' },
+    { name: 'EOD carrier validation helper works', fn: testEodCarrierValidation_, suite: 'eod' },
+    { name: 'EOD state validation helper works', fn: testEodStateValidation_, suite: 'eod' },
+    { name: 'Summary maps raw State and Carrier safely', fn: testSummaryMapsRawStateAndCarrier_, suite: 'core' },
+    { name: 'EOD customer name normalisation helper works', fn: testEodCustomerNameNormalisation_, suite: 'eod' },
+    { name: 'EOD report header normalisation helper works', fn: testEodReportHeaderNormalisation_, suite: 'eod' },
+    { name: 'EOD report sheet cache writes today as rows', fn: testEodReportSheetCacheWritesToday_, suite: 'eod' },
+    { name: 'EOD report sheet cache skips non-today writes', fn: testEodReportSheetCacheSkipsNonTodayWrites_, suite: 'eod' },
+    { name: 'EOD report runtime cache covers repeated reads', fn: testEodReportRuntimeCache_, suite: 'eod' },
+    { name: 'EOD report cache does not store row JSON blobs', fn: testEodReportCacheDoesNotStoreRowJsonBlobs_, suite: 'eod' },
+    { name: 'Outstanding Orders cache keeps OL rows only', fn: testOutstandingOrdersCacheKeepsOlRowsOnly_, suite: 'eod' },
+    { name: 'Outstanding Orders lookup uses OL rows only', fn: testOutstandingOrdersLookupUsesOlRowsOnly_, suite: 'eod' },
+    { name: 'Pallet/Product cache keeps all rows', fn: testPalletProductCacheKeepsAllRows_, suite: 'eod' },
+    { name: 'EOD report warmup caches today reports only', fn: testWarmTodayEodReportCache_, suite: 'eod' },
+    { name: 'EOD date helpers work', fn: testEodDateHelpers_, suite: 'eod' },
+    { name: 'EOD lookup key helpers work', fn: testEodLookupKeyHelpers_, suite: 'eod' },
+    { name: 'EOD result counters include blocked', fn: testEodResultCountersIncludeBlocked_, suite: 'eod' },
+    { name: 'EOD result formatting includes blocked', fn: testEodResultFormattingIncludesBlocked_, suite: 'eod' },
+    { name: 'Outstanding Orders customer correction requires exact Order+B match', fn: testOutstandingOrdersCustomerOwnerGate_, suite: 'eod' },
+    { name: 'Outstanding Orders blocks customer correction without usable Order+B owner', fn: testOutstandingOrdersCustomerOwnerGateBlocks_, suite: 'eod' },
+    { name: 'Outstanding Orders guards carrier and state corrections', fn: testOutstandingOrdersCarrierStateGuards_, suite: 'eod' },
+    { name: 'Outstanding Orders groups by Order and Search Criteria B Number', fn: testOutstandingOrdersGroupsByOrderAndBNumber_, suite: 'eod' },
+    { name: 'Outstanding Orders summary row matches correct Order+B line', fn: testOutstandingOrdersSummaryMatchesCorrectOrderBLine_, suite: 'eod' },
+    { name: 'Outstanding Orders repeated same-B rows sum quantity', fn: testOutstandingOrdersRepeatedSameBQty_, suite: 'eod' },
+    { name: 'Outstanding Orders canonical identity avoids false ambiguity', fn: testOutstandingOrdersCanonicalIdentityNotAmbiguous_, suite: 'eod' },
+    { name: 'Outstanding Orders ambiguous same-B group blocks corrections', fn: testOutstandingOrdersAmbiguousGroupBlocks_, suite: 'eod' },
+    { name: 'Outstanding Orders canonical identity detects true ambiguity', fn: testOutstandingOrdersCanonicalIdentityAmbiguous_, suite: 'eod' },
+    { name: 'Outstanding Orders missing B match blocks corrections', fn: testOutstandingOrdersMissingBMatchBlocks_, suite: 'eod' },
+    { name: 'Outstanding Orders does not fill from another same-order line', fn: testOutstandingOrdersDoesNotFillFromSameOrderOtherB_, suite: 'eod' },
+    { name: 'Pallet/Product exact C+B match sets Location', fn: testPalletProductExactMatchSetsLocation_, suite: 'eod' },
+    { name: 'Pallet/Product exact C+B match fills Member', fn: testPalletProductExactMatchFillsMember_, suite: 'eod' },
+    { name: 'Pallet/Product B owner match corrects C and Location', fn: testPalletProductBMatchOwnerGateCorrects_, suite: 'eod' },
+    { name: 'Pallet/Product B owner mismatch blocks C and Location correction', fn: testPalletProductBMatchOwnerMismatchBlocks_, suite: 'eod' },
+    { name: 'Pallet/Product missing owner blocks B correction', fn: testPalletProductBMatchMissingOwnerBlocks_, suite: 'eod' },
+    { name: 'Pallet/Product global B owner ambiguity does not block confirmed owner', fn: testPalletProductBMatchAmbiguousOwnerBlocks_, suite: 'eod' },
+    { name: 'Pallet/Product uses Outstanding Orders owner to narrow global B ambiguity', fn: testPalletProductOutstandingOrdersOwnerNarrowsGlobalAmbiguity_, suite: 'eod' },
+    { name: 'Pallet/Product blocks when confirmed B+Owner row is missing', fn: testPalletProductConfirmedOwnerMissingRowBlocks_, suite: 'eod' },
+    { name: 'Pallet/Product blocks conflicting B+Owner C/location rows', fn: testPalletProductConfirmedOwnerConflictsBlock_, suite: 'eod' },
+    { name: 'Pallet/Product C cannot correct trusted B Number', fn: testPalletProductCMatchDoesNotCorrectB_, suite: 'eod' },
+    { name: 'Pallet/Product C-only evidence does not set Location', fn: testPalletProductCOnlyEvidenceDoesNotSetLocation_, suite: 'eod' },
+    { name: 'Pallet/Product mismatch does not overwrite Location', fn: testPalletProductMismatchDoesNotOverwriteLocation_, suite: 'eod' },
+    { name: 'Pallet/Product note requires unique product tuple', fn: testPalletProductNoteRequiresUniqueProduct_, suite: 'eod' },
+    { name: 'Pallet/Product Member requires unique B and Owner match', fn: testPalletProductMemberRequiresUniqueBAndOwner_, suite: 'eod' },
+    { name: 'Prompt contains raw extraction rules', fn: testPromptRules_, suite: 'core' },
+    { name: 'Sheet setup creates expected sheets', fn: testSheetSetup_, suite: 'sheet_setup' },
+    { name: 'Sheet setup protects implementation sheets', fn: testSheetSetupProtectsImplementationSheets_, suite: 'sheet_setup' },
+    { name: 'Sheet protection helper is idempotent', fn: testSheetProtectionHelperIdempotent_, suite: 'sheet_setup' },
+    { name: 'Owner-visible internal sheets stay visible and protected', fn: testOwnerVisibleInternalSheetsStayVisible_, suite: 'sheet_setup' },
+    { name: 'Summary sheet removes only HX internal protection', fn: testSummaryProtectionCleanup_, suite: 'sheet_setup' },
+    { name: 'Summary setup applies Refresh EOD checkbox validation', fn: testSummaryCheckboxValidation_, suite: 'sheet_setup' },
+    { name: 'Summary setup applies Send Email checkbox validation', fn: testSummarySendEmailCheckboxValidation_, suite: 'sheet_setup' },
+    { name: 'Summary refresh edit handler filters edits strictly', fn: testSummaryRefreshEditFilter_, suite: 'summary' },
+    { name: 'Summary refresh edit handler refreshes checked rows', fn: testSummaryRefreshEditHandlerCallsRefresh_, suite: 'summary' },
+    { name: 'Summary refresh edit handler resets checkbox after failure', fn: testSummaryRefreshEditHandlerResetsAfterFailure_, suite: 'summary' },
+    { name: 'Summary refresh trigger duplicate check works', fn: testSummaryRefreshTriggerDuplicateCheck_, suite: 'summary' },
+    { name: 'Daily EOD cache warmup trigger duplicate check works', fn: testDailyEodCacheWarmupTriggerDuplicateCheck_, suite: 'summary' },
+    { name: 'Summary send email edit handler filters edits strictly', fn: testSummarySendEmailEditFilter_, suite: 'summary_email' },
+    { name: 'Summary send email handler sends valid row once', fn: testSummarySendEmailSendsValidRowOnce_, suite: 'summary_email' },
+    { name: 'Summary send email ledger prevents duplicate', fn: testSummarySendEmailSentLedgerPreventsDuplicate_, suite: 'summary_email' },
+    { name: 'Summary send email manual uncheck after sent is restored', fn: testSummarySendEmailManualUncheckAfterSentRestored_, suite: 'summary_email' },
+    { name: 'Summary send email blocking status prevents duplicate', fn: testSummarySendEmailBlockingStatusPreventsDuplicate_, suite: 'summary_email' },
+    { name: 'Summary send email validation failure resets checkbox', fn: testSummarySendEmailValidationFailureResets_, suite: 'summary_email' },
+    { name: 'Summary send email missing PDF blocks send', fn: testSummarySendEmailMissingPdfBlocks_, suite: 'summary_email' },
+    { name: 'Summary send email subject uses placeholders', fn: testSummarySendEmailSubjectPlaceholders_, suite: 'summary_email' },
+    { name: 'Summary send email body includes links', fn: testSummarySendEmailBodyIncludesLinks_, suite: 'summary_email' },
+    { name: 'Summary send email attaches PDF blob', fn: testSummarySendEmailAttachesPdfBlob_, suite: 'summary_email' },
+    { name: 'Summary send email exception records blocked state', fn: testSummarySendEmailExceptionBlocksRetry_, suite: 'summary_email' },
+    { name: 'Coordinator refresh processes exactly one summary row', fn: testCoordinatorRefreshProcessesOneRow_, suite: 'summary' },
+    { name: 'Coordinator refresh does not append summary rows', fn: testCoordinatorRefreshDoesNotAppend_, suite: 'summary' },
+    { name: 'Coordinator refresh uses current summary row values', fn: testCoordinatorRefreshUsesCurrentRowValues_, suite: 'summary' },
+    { name: 'Raw row append keeps raw values', fn: testAppendMockRawRow_, suite: 'summary' },
+    { name: 'Repair helper appends existing raw rows', fn: testRepairAppendMissingSummaryRows_, suite: 'summary' },
+    { name: 'Repair helper ignores inflated summary last row', fn: testRepairAppendIgnoresInflatedSummaryLastRow_, suite: 'summary' },
+    { name: 'Processor appends summary rows after thread failure', fn: testProcessorAppendsSummaryAfterThreadFailure_, suite: 'summary' },
+    { name: 'Summary append ignores inflated last row', fn: testSummaryAppendIgnoresInflatedLastRow_, suite: 'summary' },
+    { name: 'Summary appends missing rows only', fn: testSummaryAppendOnly_, suite: 'summary' },
+    { name: 'Batch and page processing keys are stable and unique', fn: testPageProcessingKey_, suite: 'core' },
+    { name: 'Legacy page key does not skip whole batch', fn: testLegacyPageKeyDoesNotSkipBatch_, suite: 'core' },
+    { name: 'PDF processor health endpoint works', fn: testPdfProcessorHealth_, suite: 'core' }
+  ];
+
+  if (!suite) {
+    return allTests;
+  }
+
+  if (suite === 'part1') {
+    return allTests.filter(testCase =>
+      ['core', 'eod', 'sheet_setup'].indexOf(testCase.suite) > -1
+    );
+  }
+
+  if (suite === 'part2') {
+    return allTests.filter(testCase =>
+      ['summary', 'summary_email'].indexOf(testCase.suite) > -1
+    );
+  }
+
+  return allTests.filter(testCase => testCase.suite === suite);
+}
+
+function ensureLocalTestSetup_() {
+  if (localTestSetupComplete_) {
+    return;
+  }
+
+  setup();
+  localTestSetupComplete_ = true;
 }
 
 function cleanupTestRows() {
@@ -160,7 +232,7 @@ function testPdfProcessorHealthOnly() {
 
 function testAppendMockRow() {
   cleanupTestRows();
-  setup();
+  ensureLocalTestSetup_();
 
   const ctx = buildMockAppendContext_(TEST_PREFIX + 'MANUAL_APPEND');
   SheetService.appendPartPickRow(ctx);
@@ -511,6 +583,41 @@ function testEodStateValidation_() {
       `State should be invalid: ${state}`
     );
   });
+}
+
+function testSummaryMapsRawStateAndCarrier_() {
+  let row = SummaryService.buildSummaryRow_(
+    {
+      'Processing Key': 'KEY::STATE_CARRIER',
+      'PDF Drive Link': 'https://drive.google.com/mock',
+      'Email Received At': new Date('2026-05-01T09:30:00+10:00'),
+      'Carrier': 'Australia Post',
+      'State': ' vic ',
+      'Customer Name': 'Example Customer',
+      'Order Number': '140O385',
+      'Location': 'A-01',
+      'C Number': '1637376',
+      'B Number': '0867173'
+    },
+    'KEY::STATE_CARRIER'
+  );
+  let values = summaryRowToObject_(row);
+
+  assertEquals_('VIC', values['State'], 'Raw State should normalize into Summary on append.');
+  assertEquals_('AP', values['Carrier'], 'Raw Carrier should normalize into Summary on append.');
+
+  row = SummaryService.buildSummaryRow_(
+    {
+      'Processing Key': 'KEY::STATE_CARRIER_BAD',
+      'Carrier': 'Unknown Freight',
+      'State': 'Victoria'
+    },
+    'KEY::STATE_CARRIER_BAD'
+  );
+  values = summaryRowToObject_(row);
+
+  assertEquals_('', values['State'], 'Invalid raw State should not be copied into Summary.');
+  assertEquals_('', values['Carrier'], 'Invalid raw Carrier should not be copied into Summary.');
 }
 
 function testEodCustomerNameNormalisation_() {
@@ -893,178 +1000,69 @@ function testEodLookupKeyHelpers_() {
 }
 
 function testOutstandingOrdersCustomerOwnerGate_() {
-  const restore = stubPalletLookupForTest_({
-    byBNumber: {
-      B1234567: [
-        { owner: 'ABCDE' },
-        { owner: 'VWXYZ' }
-      ]
-    },
-    byBNumberAndOwner: {
-      'B1234567::ABCDE': [
-        { owner: 'ABCDE', memberNo: 'MEM1' }
-      ],
-      'B1234567::VWXYZ': [
-        { owner: 'VWXYZ', memberNo: 'MEM2' }
-      ]
+  const outcome = runOutstandingOrdersRowTest_({
+    customerName: 'Old Customer',
+    carrier: 'AP',
+    state: 'NSW',
+    match: {
+      owner: 'ABCDE',
+      orderNumber: '123',
+      customerName: 'New Customer',
+      carrierCode: 'NXM',
+      customerState: 'VIC'
     }
   });
 
-  try {
-    const outcome = runOutstandingOrdersRowTest_({
-      customerName: 'Old Customer',
-      carrier: 'AP',
-      state: 'NSW',
-      match: {
-        owner: 'ABCDE',
-        orderNumber: '123',
-        customerName: 'New Customer',
-        carrierCode: 'NXM',
-        customerState: 'VIC'
-      }
-    });
+  assertEquals_(
+    'ABCDE',
+    outcome.context.values['Owner'],
+    'Exact Order+B match should write the Outstanding Orders owner.'
+  );
 
-    assertEquals_(
-      'New Customer',
-      outcome.context.values['Customer Name'],
-      'Customer Name should be corrected when B owner confirms order owner.'
-    );
+  assertEquals_(
+    'New Customer',
+    outcome.context.values['Customer Name'],
+    'Customer Name should be corrected from the selected Order+B line.'
+  );
 
-    assertContains_(
-      outcome.validationRows[0].notes.join('\n'),
-      'corrected Customer Name',
-      'Customer correction should add a correction note.'
-    );
-  } finally {
-    restore();
-  }
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'corrected Customer Name',
+    'Customer correction should add a correction note.'
+  );
 }
 
 function testOutstandingOrdersCustomerOwnerGateBlocks_() {
-  let restore = stubPalletLookupForTest_({
-    byBNumber: {
-      B1234567: [
-        { owner: 'VWXYZ' }
-      ]
+  const outcome = runOutstandingOrdersRowTest_({
+    customerName: 'Old Customer',
+    carrier: 'AP',
+    state: 'NSW',
+    match: {
+      owner: '',
+      orderNumber: '123',
+      customerName: 'New Customer',
+      carrierCode: 'NXM',
+      customerState: 'VIC'
     }
   });
 
-  try {
-    let outcome = runOutstandingOrdersRowTest_({
-      customerName: 'Old Customer',
-      carrier: 'AP',
-      state: 'NSW',
-      match: {
-        owner: 'ABCDE',
-        orderNumber: '123',
-        customerName: 'New Customer',
-        carrierCode: 'NXM',
-        customerState: 'VIC'
-      }
-    });
+  assertEquals_(
+    'Old Customer',
+    outcome.context.values['Customer Name'],
+    'Customer Name should stay unchanged when selected Order+B owner is unusable.'
+  );
 
-    assertEquals_(
-      'Old Customer',
-      outcome.context.values['Customer Name'],
-      'Customer Name should stay unchanged when B owner mismatches.'
-    );
-
-    assertContains_(
-      outcome.validationRows[0].notes.join('\n'),
-      'does not match B Number owner VWXYZ',
-      'Owner mismatch should add a blocked-correction note.'
-    );
-    assertEquals_(1, outcome.result.blocked, 'Customer owner mismatch should count as blocked.');
-    assertEquals_(0, outcome.result.notFound, 'Customer owner mismatch should not count as not found.');
-  } finally {
-    restore();
-  }
-
-  restore = stubPalletLookupForTest_(null);
-
-  try {
-    let outcome = runOutstandingOrdersRowTest_({
-      customerName: 'Old Customer',
-      carrier: 'AP',
-      state: 'NSW',
-      match: {
-        owner: 'ABCDE',
-        orderNumber: '123',
-        customerName: 'New Customer',
-        carrierCode: 'NXM',
-        customerState: 'VIC'
-      }
-    });
-
-    assertEquals_(
-      'Old Customer',
-      outcome.context.values['Customer Name'],
-      'Customer Name should stay unchanged when Pallet/Product lookup is missing.'
-    );
-
-    assertContains_(
-      outcome.validationRows[0].notes.join('\n'),
-      'B Number owner could not confirm order owner',
-      'Missing owner confirmation should add a blocked-correction note.'
-    );
-    assertEquals_(1, outcome.result.blocked, 'Missing owner confirmation should count as blocked.');
-    assertEquals_(0, outcome.result.notFound, 'Missing owner confirmation should not count as not found.');
-  } finally {
-    restore();
-  }
-
-  restore = stubPalletLookupForTest_({
-    byBNumber: {
-      B1234567: [
-        { owner: 'ABCDE' },
-        { owner: 'VWXYZ' }
-      ]
-    }
-  });
-
-  try {
-    const outcome = runOutstandingOrdersRowTest_({
-      customerName: 'Old Customer',
-      carrier: 'AP',
-      state: 'NSW',
-      match: {
-        owner: 'ABCDE',
-        orderNumber: '123',
-        customerName: 'New Customer',
-        carrierCode: 'NXM',
-        customerState: 'VIC'
-      }
-    });
-
-    assertEquals_(
-      'Old Customer',
-      outcome.context.values['Customer Name'],
-      'Customer Name should stay unchanged when B owner is ambiguous.'
-    );
-
-    assertContains_(
-      outcome.validationRows[0].notes.join('\n'),
-      'B Number owner could not confirm order owner',
-      'Ambiguous owner confirmation should add a blocked-correction note.'
-    );
-    assertEquals_(1, outcome.result.blocked, 'Ambiguous owner confirmation should count as blocked.');
-    assertEquals_(0, outcome.result.notFound, 'Ambiguous owner confirmation should not count as not found.');
-  } finally {
-    restore();
-  }
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'matched Outstanding Orders line has no usable Owner',
+    'Missing selected Order+B owner should add a blocked-correction note.'
+  );
+  assertEquals_(1, outcome.result.blocked, 'Missing selected Order+B owner should count as blocked.');
+  assertEquals_(0, outcome.result.notFound, 'Missing selected Order+B owner should not count as not found.');
 }
 
 function testOutstandingOrdersCarrierStateGuards_() {
-  const restore = stubPalletLookupForTest_({
-    byBNumber: {
-      B1234567: [
-        { owner: 'ABCDE' }
-      ]
-    }
-  });
-
-  try {
-    let outcome = runOutstandingOrdersRowTest_({
+  let outcome = runOutstandingOrdersRowTest_({
       customerName: 'Same Customer',
       carrier: '',
       state: '',
@@ -1134,9 +1132,6 @@ function testOutstandingOrdersCarrierStateGuards_() {
     assertContains_(notes, 'State not corrected', 'Invalid report State should add a validation note.');
     assertEquals_(2, outcome.result.blocked, 'Invalid report Carrier/State should count as blocked.');
     assertEquals_(0, outcome.result.notFound, 'Invalid report Carrier/State should not count as not found.');
-  } finally {
-    restore();
-  }
 }
 
 function testOutstandingOrdersGroupsByOrderAndBNumber_() {
@@ -1593,8 +1588,8 @@ function testPalletProductBMatchOwnerMismatchBlocks_() {
   assertEquals_('OLD-LOC', outcome.context.values['Location'], 'Owner mismatch should not set Location.');
   assertContains_(
     outcome.validationRows[0].notes.join('\n'),
-    'does not match B Number owner',
-    'Owner mismatch should add a blocked-correction note.'
+    'no Pallet/Product row found for B B1234567 and Owner ABCDE',
+    'Owner mismatch should add a missing B+Owner row note.'
   );
   assertEquals_(1, outcome.result.blocked, 'Owner mismatch should count as blocked.');
   assertEquals_(0, outcome.result.notFound, 'Owner mismatch should not count as not found.');
@@ -1623,7 +1618,7 @@ function testPalletProductBMatchMissingOwnerBlocks_() {
   assertEquals_('OLD-LOC', outcome.context.values['Location'], 'Missing owner should not set Location.');
   assertContains_(
     outcome.validationRows[0].notes.join('\n'),
-    'Summary Owner is missing',
+    'no confirmed Outstanding Orders owner was available',
     'Missing owner should add a blocked-correction note.'
   );
   assertEquals_(1, outcome.result.blocked, 'Missing owner should count as blocked.');
@@ -1656,15 +1651,111 @@ function testPalletProductBMatchAmbiguousOwnerBlocks_() {
     ]
   });
 
-  assertEquals_('', outcome.context.values['C Number'], 'Ambiguous B ownership should not correct C Number.');
-  assertEquals_('OLD-LOC', outcome.context.values['Location'], 'Ambiguous B ownership should not set Location.');
+  assertEquals_('C7654321', outcome.context.values['C Number'], 'Confirmed B+Owner row should correct C Number despite global B ownership ambiguity.');
+  assertEquals_('A-01-02', outcome.context.values['Location'], 'Confirmed B+Owner row should set Location despite global B ownership ambiguity.');
   assertContains_(
     outcome.validationRows[0].notes.join('\n'),
-    'B Number ownership is ambiguous',
-    'Ambiguous B ownership should add a blocked-correction note.'
+    'corrected C Number',
+    'Confirmed B+Owner row should add a correction note.'
   );
-  assertEquals_(1, outcome.result.blocked, 'Ambiguous B ownership should count as blocked.');
+  assertEquals_(0, outcome.result.blocked, 'Global B ownership ambiguity alone should not count as blocked.');
   assertEquals_(0, outcome.result.notFound, 'Ambiguous B ownership should not count as not found.');
+}
+
+function testPalletProductOutstandingOrdersOwnerNarrowsGlobalAmbiguity_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': '',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      }),
+      buildPalletProductRecord_({
+        location: 'B-09-09',
+        cNumber: 'C9999999',
+        bNumber: 'B1234567',
+        owner: 'VWXYZ',
+        memberNo: 'M002'
+      })
+    ]
+  });
+
+  assertEquals_('C7654321', outcome.context.values['C Number'], 'B+Owner row should correct C Number.');
+  assertEquals_('A-01-02', outcome.context.values['Location'], 'B+Owner row should set Location.');
+  assertEquals_('M001', outcome.context.values['Member'], 'B+Owner row should fill Member.');
+}
+
+function testPalletProductConfirmedOwnerMissingRowBlocks_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': '',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'B-09-09',
+        cNumber: 'C9999999',
+        bNumber: 'B1234567',
+        owner: 'VWXYZ',
+        memberNo: 'M002'
+      })
+    ]
+  });
+
+  assertEquals_('', outcome.context.values['C Number'], 'Missing B+Owner row should not correct C Number.');
+  assertEquals_('OLD-LOC', outcome.context.values['Location'], 'Missing B+Owner row should not set Location.');
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'no Pallet/Product row found for B B1234567 and Owner ABCDE',
+    'Missing B+Owner row should add a specific blocked-correction note.'
+  );
+  assertEquals_(1, outcome.result.blocked, 'Missing B+Owner row should count as blocked.');
+}
+
+function testPalletProductConfirmedOwnerConflictsBlock_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': '',
+      'B Number': 'B1234567'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      }),
+      buildPalletProductRecord_({
+        location: 'A-01-03',
+        cNumber: 'C7654322',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_('', outcome.context.values['C Number'], 'Conflicting B+Owner rows should not correct C Number.');
+  assertEquals_('OLD-LOC', outcome.context.values['Location'], 'Conflicting B+Owner rows should not set Location.');
+  assertContains_(
+    outcome.validationRows[0].notes.join('\n'),
+    'conflicting C/location rows found for B B1234567 and Owner ABCDE',
+    'Conflicting B+Owner rows should add a specific blocked-correction note.'
+  );
+  assertEquals_(1, outcome.result.blocked, 'Conflicting B+Owner rows should count as blocked.');
 }
 
 function testPalletProductCMatchDoesNotCorrectB_() {
@@ -1909,7 +2000,7 @@ function testPromptRules_() {
 }
 
 function testSheetSetup_() {
-  setup();
+  ensureLocalTestSetup_();
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -1925,7 +2016,7 @@ function testSheetSetup_() {
 }
 
 function testSheetSetupProtectsImplementationSheets_() {
-  setup();
+  ensureLocalTestSetup_();
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const internalSheetNames = [
@@ -1989,6 +2080,43 @@ function testSheetProtectionHelperIdempotent_() {
   );
 }
 
+function testOwnerVisibleInternalSheetsStayVisible_() {
+  const effectiveUser = buildMockUser_('owner@example.com');
+  const visibleInternalSheetNames = [
+    CONFIG.sheets.eodReportCacheSheetName,
+    CONFIG.sheets.eodOutstandingOrdersCacheSheetName,
+    CONFIG.sheets.eodPalletProductCacheSheetName,
+    CONFIG.sheets.summaryEmailLedgerSheetName
+  ];
+
+  visibleInternalSheetNames.forEach(sheetName => {
+    const sheet = buildMockProtectableSheet_(sheetName, []);
+
+    SheetService.ensureInternalSheetProtection_(sheet, effectiveUser);
+
+    const protection = sheet.protections[0];
+
+    assertEquals_(false, SheetService.shouldHideImplementationSheet_(sheetName), `${sheetName} should remain visible to the owner.`);
+    assertEquals_(false, protection.domainEdit, `${sheetName} domain editing should be disabled.`);
+    assertEquals_(
+      'owner@example.com',
+      protection.editors[0].getEmail(),
+      `${sheetName} should explicitly retain the effective user as editor.`
+    );
+  });
+
+  assertEquals_(
+    true,
+    SheetService.shouldHideImplementationSheet_(CONFIG.sheets.extractedSheetName),
+    'Older internal implementation sheets should remain hideable.'
+  );
+  assertEquals_(
+    false,
+    SheetService.shouldHideImplementationSheet_(CONFIG.summary.sheetName),
+    'Summary should remain visible/editable.'
+  );
+}
+
 function testSummaryProtectionCleanup_() {
   const hxProtection = buildMockProtection_(SheetService.internalProtectionDescription);
   const manualProtection = buildMockProtection_('Manual finance lock');
@@ -2004,7 +2132,7 @@ function testSummaryProtectionCleanup_() {
 }
 
 function testSummaryCheckboxValidation_() {
-  setup();
+  ensureLocalTestSetup_();
 
   const sheet = SheetService.getSheet_(CONFIG.summary.sheetName);
   const headers = sheet
@@ -2027,7 +2155,7 @@ function testSummaryCheckboxValidation_() {
 }
 
 function testSummarySendEmailCheckboxValidation_() {
-  setup();
+  ensureLocalTestSetup_();
 
   const sheet = SheetService.getSheet_(CONFIG.summary.sheetName);
   const headers = sheet
@@ -2547,7 +2675,7 @@ function testCoordinatorRefreshDoesNotAppend_() {
 }
 
 function testCoordinatorRefreshUsesCurrentRowValues_() {
-  setup();
+  ensureLocalTestSetup_();
 
   const sheet = SheetService.getSheet_(CONFIG.summary.sheetName);
   const headers = sheet
@@ -2593,7 +2721,7 @@ function testCoordinatorRefreshUsesCurrentRowValues_() {
 }
 
 function testAppendMockRawRow_() {
-  setup();
+  ensureLocalTestSetup_();
 
   const processingKey = TEST_PREFIX + 'RAW_APPEND';
   const ctx = buildMockAppendContext_(processingKey);
@@ -2656,7 +2784,7 @@ function testAppendMockRawRow_() {
 }
 
 function testRepairAppendMissingSummaryRows_() {
-  setup();
+  ensureLocalTestSetup_();
 
   const processingKey = TEST_PREFIX + 'REPAIR_APPEND_MISSING';
   const ctx = buildMockAppendContext_(processingKey);
@@ -2674,7 +2802,7 @@ function testRepairAppendMissingSummaryRows_() {
 }
 
 function testRepairAppendIgnoresInflatedSummaryLastRow_() {
-  setup();
+  ensureLocalTestSetup_();
 
   const existingKey = TEST_PREFIX + 'REPAIR_APPEND_PLACEMENT_EXISTING';
   const newKey = TEST_PREFIX + 'REPAIR_APPEND_PLACEMENT_NEW';
@@ -2795,7 +2923,7 @@ function testProcessorAppendsSummaryAfterThreadFailure_() {
 }
 
 function testSummaryAppendIgnoresInflatedLastRow_() {
-  setup();
+  ensureLocalTestSetup_();
 
   const existingKey = TEST_PREFIX + 'SUMMARY_APPEND_PLACEMENT_EXISTING';
   const newKey = TEST_PREFIX + 'SUMMARY_APPEND_PLACEMENT_NEW';
@@ -2836,7 +2964,7 @@ function testSummaryAppendIgnoresInflatedLastRow_() {
 }
 
 function testSummaryAppendOnly_() {
-  setup();
+  ensureLocalTestSetup_();
 
   const processingKey = TEST_PREFIX + 'SUMMARY_APPEND_ONLY';
   const ctx = buildMockAppendContext_(processingKey);
@@ -3896,6 +4024,17 @@ function buildMockAppendContext_(processingKey) {
     extractionStatus: 'AUTO_EXTRACTED',
     extractionError: ''
   };
+}
+
+function summaryRowToObject_(row) {
+  const headers = SummaryService.getConfiguredSummaryHeaders_();
+  const values = {};
+
+  headers.forEach((header, index) => {
+    values[header] = row[index];
+  });
+
+  return values;
 }
 
 function runOutstandingOrdersRowTest_(options) {

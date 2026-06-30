@@ -16,6 +16,14 @@ const NormalisationService = {
       return this.normalizeCartonNumber_(value) || value;
     }
 
+    if (fieldKey === 'state') {
+      return this.normalizeState_(value) || '';
+    }
+
+    if (fieldKey === 'carrier') {
+      return this.normalizeCarrier_(value) || '';
+    }
+
     return value;
   },
 
@@ -100,6 +108,40 @@ const NormalisationService = {
     }
 
     return null;
+  },
+
+  normalizeState_(value) {
+    const cleaned = String(value || '')
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, '');
+
+    return ['NSW', 'VIC', 'ACT', 'WA', 'TAS', 'NT', 'QLD', 'SA']
+      .indexOf(cleaned) >= 0
+      ? cleaned
+      : null;
+  },
+
+  normalizeCarrier_(value) {
+    const cleaned = String(value || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const aliases = {
+      AP: 'AP',
+      'AUSTRALIA POST': 'AP',
+      NXM: 'NXM',
+      NEXDAY: 'NXM',
+      'NEX DAY': 'NXM',
+      AC: 'AC',
+      'ALTERNATE CARRIER': 'AC',
+      'ALTERNATIVE CARRIER': 'AC'
+    };
+
+    return aliases[cleaned] || null;
   }
 };
 
