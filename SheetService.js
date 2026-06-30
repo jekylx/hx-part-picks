@@ -534,6 +534,16 @@ const LogService = {
   append_(level, status, messageId, filename, details, link) {
     try {
       const sheet = SheetService.getSheet_(CONFIG.sheets.logSheetName);
+      if (
+        sheet &&
+        typeof sheet.getName === 'function' &&
+        sheet.getName() !== CONFIG.sheets.logSheetName
+      ) {
+        throw new Error(
+          `Log writer resolved wrong sheet: ${sheet.getName()} instead of ${CONFIG.sheets.logSheetName}.`
+        );
+      }
+
       const row = [
         new Date(),
         level || '',
@@ -544,10 +554,16 @@ const LogService = {
         link || ''
       ];
       const nextRow = sheet.getLastRow() + 1;
+      const clearWidth = Math.max(
+        row.length,
+        typeof sheet.getLastColumn === 'function' ? sheet.getLastColumn() : 0,
+        typeof sheet.getMaxColumns === 'function' ? sheet.getMaxColumns() : 0
+      );
+      const validationRange = sheet.getRange(nextRow, 1, 1, clearWidth);
       const range = sheet.getRange(nextRow, 1, 1, row.length);
 
-      if (typeof range.clearDataValidations === 'function') {
-        range.clearDataValidations();
+      if (typeof validationRange.clearDataValidations === 'function') {
+        validationRange.clearDataValidations();
       }
 
       range.setValues([row]);

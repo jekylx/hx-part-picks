@@ -77,8 +77,16 @@ const PalletAndProductByMembersEodReportService = {
         : null;
 
     if (exactMatch) {
-      context.setValue(summaryColumns.location, rowIndex, exactMatch.location);
-      this.applyMemberAndProductInfo_(
+      let changed = false;
+
+      changed = this.setContextValueIfChanged_(
+        context,
+        summaryColumns.location,
+        rowIndex,
+        exactMatch.location
+      ) || changed;
+
+      changed = this.applyMemberAndProductInfo_(
         context,
         validationRows,
         rowIndex,
@@ -88,7 +96,9 @@ const PalletAndProductByMembersEodReportService = {
         result
       );
       EodReportValidationService.ok(validationRows, rowIndex);
-      result.filled++;
+      if (changed) {
+        result.filled++;
+      }
       return;
     }
 
@@ -108,8 +118,18 @@ const PalletAndProductByMembersEodReportService = {
       );
 
       if (bCorrectionGate.allowed) {
-        context.setValue(summaryColumns.cNumber, rowIndex, uniqueBMatch.cNumber);
-        context.setValue(summaryColumns.location, rowIndex, uniqueBMatch.location);
+        this.setContextValueIfChanged_(
+          context,
+          summaryColumns.cNumber,
+          rowIndex,
+          uniqueBMatch.cNumber
+        );
+        this.setContextValueIfChanged_(
+          context,
+          summaryColumns.location,
+          rowIndex,
+          uniqueBMatch.location
+        );
         this.applyMemberAndProductInfo_(
           context,
           validationRows,
@@ -285,13 +305,14 @@ const PalletAndProductByMembersEodReportService = {
     const summaryColumns = this.reportConfig_().summaryColumns;
     const normalizedBNumber = EodReportNormalisationService.normalizeBNumber(bNumber);
     const shouldCountMissingMember = countMissingMember !== false;
+    let changed = false;
 
     if (!normalizedBNumber) {
-      return;
+      return false;
     }
 
     if (!owner) {
-      return;
+      return false;
     }
 
     const memberMatches = lookup.byBNumberAndOwner[
@@ -301,12 +322,13 @@ const PalletAndProductByMembersEodReportService = {
     const product = this.getUniqueProductForBNumber_(memberMatches);
 
     if (product) {
-      context.setNote(
+      changed = this.setContextNoteIfChanged_(
+        context,
         summaryColumns.bNumber,
         rowIndex,
         EodReportNormalisationService.buildProductNote(product)
-      );
-      this.setProductValues_(context, rowIndex, summaryColumns, product);
+      ) || changed;
+      changed = this.setProductValues_(context, rowIndex, summaryColumns, product) || changed;
     }
 
     const memberMatch = this.getUniqueMemberForBNumberAndOwner_(memberMatches);
@@ -320,17 +342,69 @@ const PalletAndProductByMembersEodReportService = {
       if (shouldCountMissingMember) {
         result.notFound++;
       }
-      return;
+      return changed;
     }
 
-    context.setValue(summaryColumns.member, rowIndex, memberMatch.memberNo);
+    changed = this.setContextValueIfChanged_(
+      context,
+      summaryColumns.member,
+      rowIndex,
+      memberMatch.memberNo
+    ) || changed;
+
+    return changed;
   },
 
   setProductValues_(context, rowIndex, summaryColumns, product) {
-    context.setValue(summaryColumns.productCode, rowIndex, product.productCode || '');
-    context.setValue(summaryColumns.productDescription, rowIndex, product.productDescription || '');
-    context.setValue(summaryColumns.vintage, rowIndex, product.vintage || '');
-    context.setValue(summaryColumns.bottleSize, rowIndex, product.bottleSize || '');
+    let changed = false;
+
+    changed = this.setContextValueIfChanged_(
+      context,
+      summaryColumns.productCode,
+      rowIndex,
+      product.productCode || ''
+    ) || changed;
+    changed = this.setContextValueIfChanged_(
+      context,
+      summaryColumns.productDescription,
+      rowIndex,
+      product.productDescription || ''
+    ) || changed;
+    changed = this.setContextValueIfChanged_(
+      context,
+      summaryColumns.vintage,
+      rowIndex,
+      product.vintage || ''
+    ) || changed;
+    changed = this.setContextValueIfChanged_(
+      context,
+      summaryColumns.bottleSize,
+      rowIndex,
+      product.bottleSize || ''
+    ) || changed;
+
+    return changed;
+  },
+
+  setContextValueIfChanged_(context, headerName, rowIndex, value) {
+    if (context.value(headerName, rowIndex) === value) {
+      return false;
+    }
+
+    context.setValue(headerName, rowIndex, value);
+    return true;
+  },
+
+  setContextNoteIfChanged_(context, headerName, rowIndex, value) {
+    if (
+      typeof context.getColumnState === 'function' &&
+      context.getColumnState(headerName).notes[rowIndex][0] === (value || '')
+    ) {
+      return false;
+    }
+
+    context.setNote(headerName, rowIndex, value);
+    return true;
   },
 
   getLookupForDate_(dateKey) {

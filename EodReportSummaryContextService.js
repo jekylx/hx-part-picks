@@ -7,6 +7,32 @@ const EodReportSummaryContextService = {
       .map(header => String(header || '').trim());
 
     const states = {};
+    const requiredHeaders = [
+      'Location',
+      'C Number',
+      'B Number',
+      'Product Code',
+      'Product Description',
+      'Vintage',
+      'Bottle Size',
+      'Date Completed',
+      'SLA',
+      'Refresh EOD',
+      'Send Email'
+    ];
+
+    requiredHeaders.forEach(headerName => {
+      const expected = EodReportNormalisationService.normalizeHeader(headerName);
+      const found = headers.some(header =>
+        EodReportNormalisationService.normalizeHeader(header) === expected
+      );
+
+      if (!found) {
+        throw new Error(
+          `Required summary column not found: ${headerName}. Found columns: ${headers.join(', ')}`
+        );
+      }
+    });
 
     return {
       sheet,
@@ -59,14 +85,28 @@ const EodReportSummaryContextService = {
 
       setValue(headerName, rowIndex, value) {
         const state = this.getColumnState(headerName);
+        const before = state.values[rowIndex][0];
+
+        if (before === value) {
+          return false;
+        }
+
         state.values[rowIndex][0] = value;
         state.valuesChanged = true;
+        return true;
       },
 
       setNote(headerName, rowIndex, note) {
         const state = this.getColumnState(headerName);
-        state.notes[rowIndex][0] = note || '';
+        const after = note || '';
+
+        if (state.notes[rowIndex][0] === after) {
+          return false;
+        }
+
+        state.notes[rowIndex][0] = after;
         state.notesChanged = true;
+        return true;
       },
 
       setBackground(headerName, rowIndex, colour) {
@@ -80,6 +120,10 @@ const EodReportSummaryContextService = {
           const state = states[headerName];
 
           if (state.valuesChanged) {
+            if (typeof state.range.clearDataValidations === 'function') {
+              state.range.clearDataValidations();
+            }
+
             state.range.setValues(state.values);
           }
 

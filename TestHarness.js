@@ -143,6 +143,7 @@ function getLocalTestCases_(suite) {
     { name: 'Summary setup migrates product columns without overwriting existing columns', fn: testSummarySetupMigratesProductColumns_, suite: 'sheet_setup' },
     { name: 'Summary setup migration is idempotent', fn: testSummarySetupMigrationIdempotent_, suite: 'sheet_setup' },
     { name: 'Summary setup keeps validations on live header columns', fn: testSummarySetupValidationPlacement_, suite: 'sheet_setup' },
+    { name: 'EOD summary context requires live header columns', fn: testEodSummaryContextRequiresLiveHeaders_, suite: 'summary' },
     { name: 'Log writer clears stale validation before append', fn: testLogWriterClearsStaleValidation_, suite: 'sheet_setup' },
     { name: 'EOD lookup applied log survives stale log validation', fn: testEodLookupAppliedLogSurvivesStaleLogValidation_, suite: 'summary' },
     { name: 'Summary refresh edit handler filters edits strictly', fn: testSummaryRefreshEditFilter_, suite: 'summary' },
@@ -170,6 +171,7 @@ function getLocalTestCases_(suite) {
     { name: 'Coordinator refresh uses current summary row values', fn: testCoordinatorRefreshUsesCurrentRowValues_, suite: 'summary' },
     { name: 'Coordinator refresh writes product tuple cells and B note', fn: testCoordinatorRefreshWritesProductTupleCells_, suite: 'summary' },
     { name: 'Coordinator append enrichment writes product tuple cells and B note', fn: testCoordinatorAppendWritesProductTupleCells_, suite: 'summary' },
+    { name: 'Summary append live EOD path writes product tuple cells', fn: testSummaryAppendLiveEodPathWritesProductTupleCells_, suite: 'summary' },
     { name: 'Raw row append keeps raw values', fn: testAppendMockRawRow_, suite: 'summary' },
     { name: 'Summary sync appends existing raw rows', fn: testRepairAppendMissingSummaryRows_, suite: 'summary' },
     { name: 'Summary sync ignores inflated summary last row', fn: testRepairAppendIgnoresInflatedSummaryLastRow_, suite: 'summary' },
@@ -2758,6 +2760,55 @@ function testLogWriterClearsStaleValidation_() {
     logSheet.clearDataValidationsCalled,
     'Log writer should clear validations on the target log row before writing.'
   );
+  assertEquals_(
+    true,
+    logSheet.fullRowValidationCleared,
+    'Log writer should clear stale validations across the full target log row width.'
+  );
+}
+
+function testEodSummaryContextRequiresLiveHeaders_() {
+  const sheet = buildMockMigratableSummarySheet_(
+    SummaryService.getConfiguredSummaryHeaders_(),
+    []
+  );
+  const requiredHeaders = [
+    'Location',
+    'C Number',
+    'B Number',
+    'Product Code',
+    'Product Description',
+    'Vintage',
+    'Bottle Size',
+    'Date Completed',
+    'SLA',
+    'Refresh EOD',
+    'Send Email'
+  ];
+
+  requiredHeaders.forEach(headerName => {
+    assertTruthy_(
+      EodReportSummaryContextService.create(sheet, CONFIG.summary.headerRow + 1, 1)
+        .getColumnIndex(headerName) > 0,
+      `${headerName} should be found by live header name.`
+    );
+  });
+
+  const brokenHeaders = SummaryService
+    .getConfiguredSummaryHeaders_()
+    .filter(header => header !== 'Product Code');
+  const brokenSheet = buildMockMigratableSummarySheet_(brokenHeaders, []);
+
+  try {
+    EodReportSummaryContextService.create(brokenSheet, CONFIG.summary.headerRow + 1, 1);
+    throw new Error('Expected missing Product Code to fail.');
+  } catch (err) {
+    assertContains_(
+      String(err),
+      'Required summary column not found: Product Code',
+      'Missing required product columns should fail loudly.'
+    );
+  }
 }
 
 function testSummaryRefreshEditFilter_() {
@@ -3523,6 +3574,122 @@ function testEodLookupAppliedLogSurvivesStaleLogValidation_() {
   assertSummaryProductTupleWritten_(sheet, 'EOD path with logging should still write product tuple cells.');
 }
 
+function testSummaryAppendLiveEodPathWritesProductTupleCells_() {
+  ensureLocalTestSetup_();
+
+  const processingKey = TEST_PREFIX + 'LIVE_EOD_APPEND_PRODUCT_TUPLE';
+  const ctx = buildMockAppendContext_(processingKey);
+  const summarySheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const headers = summarySheet
+    .getRange(CONFIG.summary.headerRow, 1, 1, summarySheet.getLastColumn())
+    .getValues()[0];
+  const targetRow = SummaryService.getNextSummaryAppendRow_(summarySheet);
+  const staleRule = SpreadsheetApp
+    .newDataValidation()
+    .requireDate()
+    .setAllowInvalid(false)
+    .setHelpText('Enter a valid completed date, e.g. 13/06/2026.')
+    .build();
+  const staleValidationHeaders = [
+    'Member',
+    'Product Code',
+    'Product Description',
+    'Vintage',
+    'Bottle Size'
+  ];
+  const originalOutstandingLookup = OutstandingOrdersEodReportService.getLookupForDate_;
+  const originalPalletLookup = PalletAndProductByMembersEodReportService.getLookupForDate_;
+  const originalLogInfo = LogService.info;
+  const originalLogError = LogService.error;
+  const logs = [];
+  let errorLogged = false;
+
+  ctx.form.order_number = '7654321';
+  ctx.form.b_code = '1234567';
+  ctx.form.carton_number = '7654321';
+  ctx.form.original_location = '';
+
+  staleValidationHeaders.forEach(headerName => {
+    const col = getColumnIndex_(headers, headerName);
+
+    assertTruthy_(col > 0, `${headerName} column missing.`);
+
+    summarySheet
+      .getRange(targetRow, col)
+      .setDataValidation(staleRule);
+  });
+
+  OutstandingOrdersEodReportService.getLookupForDate_ = () => ({
+    byOrderNumber: {},
+    byOrderNumberAndBNumber: {
+      '7654321::B1234567': {
+        orderNumber: '7654321',
+        searchCriteriaBNumber: 'B1234567',
+        owner: 'ABCDE',
+        customerName: 'Example Customer',
+        carrierCode: 'AP',
+        customerState: 'VIC',
+        qtyOrdSum: 1,
+        ambiguous: false,
+        ambiguityReasons: [],
+        rows: []
+      }
+    }
+  });
+
+  PalletAndProductByMembersEodReportService.getLookupForDate_ = () =>
+    buildMockPalletProductLookup_([
+      buildPalletProductRecord_({
+        location: 'A-01-02',
+        cNumber: 'C7654321',
+        bNumber: 'B1234567',
+        owner: 'ABCDE',
+        memberNo: 'M001',
+        productCode: 'P001',
+        productDescription: 'Product One',
+        vintage: '2020',
+        bottleSize: '750ML'
+      })
+    ]);
+
+  LogService.info = (status, messageId, filename, details) => {
+    logs.push({ status, details });
+  };
+  LogService.error = () => {
+    errorLogged = true;
+  };
+
+  try {
+    SheetService.appendPartPickRow(ctx);
+    SummaryService.appendMissingSummaryRows();
+  } finally {
+    OutstandingOrdersEodReportService.getLookupForDate_ = originalOutstandingLookup;
+    PalletAndProductByMembersEodReportService.getLookupForDate_ = originalPalletLookup;
+    LogService.info = originalLogInfo;
+    LogService.error = originalLogError;
+  }
+
+  const find = findRowByFirstColumnValue_(summarySheet, processingKey);
+
+  assertTruthy_(find.rowNumber > 0, 'Summary append did not create the live-path row.');
+
+  assertSummaryRowProductTupleWritten_(
+    summarySheet,
+    find.rowNumber,
+    'Summary append live EOD path should write product tuple cells.'
+  );
+  assertEquals_(false, errorLogged, 'Live EOD path should not log an EOD failure.');
+
+  const appliedLog = logs.find(log => log.status === 'EOD_REPORT_LOOKUP_APPLIED');
+
+  assertTruthy_(appliedLog, 'Live EOD path should log EOD_REPORT_LOOKUP_APPLIED.');
+  assertContains_(
+    appliedLog.details,
+    'PALLET AND PRODUCT BY MEMBERS checked=1 filled=1',
+    'Pallet/Product filled counter should match the visible written product/member cells.'
+  );
+}
+
 function testAppendMockRawRow_() {
   ensureLocalTestSetup_();
 
@@ -4176,19 +4343,49 @@ function stubCoordinatorProductTupleLookups_() {
 }
 
 function assertSummaryProductTupleWritten_(sheet, messagePrefix) {
-  assertEquals_('A-01-02', sheet.getDataValueByHeader('Location'), `${messagePrefix} Location should be filled from the same match.`);
-  assertEquals_('M001', sheet.getDataValueByHeader('Member'), `${messagePrefix} Member should be filled from the same B+Owner evidence.`);
-  assertEquals_('P001', sheet.getDataValueByHeader('Product Code'), `${messagePrefix} Product Code should be written.`);
-  assertEquals_('Product One', sheet.getDataValueByHeader('Product Description'), `${messagePrefix} Product Description should be written.`);
-  assertEquals_('2020', sheet.getDataValueByHeader('Vintage'), `${messagePrefix} Vintage should be written.`);
-  assertEquals_('750ML', sheet.getDataValueByHeader('Bottle Size'), `${messagePrefix} Bottle Size should be written.`);
+  assertSummaryRowProductTupleWritten_(
+    sheet,
+    Number(CONFIG.summary.headerRow || 2) + 1,
+    messagePrefix
+  );
+}
+
+function assertSummaryRowProductTupleWritten_(sheet, rowNumber, messagePrefix) {
+  const headers = sheet.getHeaderValues
+    ? sheet.getHeaderValues()
+    : sheet
+      .getRange(CONFIG.summary.headerRow, 1, 1, sheet.getLastColumn())
+      .getValues()[0];
+
+  function value(headerName) {
+    const col = getColumnIndex_(headers, headerName);
+
+    assertTruthy_(col > 0, `${headerName} column missing.`);
+
+    return sheet.getRange(rowNumber, col).getValue();
+  }
+
+  function note(headerName) {
+    const col = getColumnIndex_(headers, headerName);
+
+    assertTruthy_(col > 0, `${headerName} column missing.`);
+
+    return sheet.getRange(rowNumber, col).getNote();
+  }
+
+  assertEquals_('A-01-02', value('Location'), `${messagePrefix} Location should be filled from the same match.`);
+  assertEquals_('M001', value('Member'), `${messagePrefix} Member should be filled from the same B+Owner evidence.`);
+  assertEquals_('P001', value('Product Code'), `${messagePrefix} Product Code should be written.`);
+  assertEquals_('Product One', value('Product Description'), `${messagePrefix} Product Description should be written.`);
+  assertEquals_('2020', String(value('Vintage')), `${messagePrefix} Vintage should be written.`);
+  assertEquals_('750ML', value('Bottle Size'), `${messagePrefix} Bottle Size should be written.`);
   assertContains_(
-    sheet.getNoteByHeader('B Number'),
+    note('B Number'),
     'Product Code: P001',
     `${messagePrefix} B Number note should still be written.`
   );
   assertContains_(
-    sheet.getNoteByHeader('B Number'),
+    note('B Number'),
     'Product Description: Product One',
     `${messagePrefix} B Number note should use the same product tuple.`
   );
@@ -4233,7 +4430,9 @@ function buildMockValidationBlockingLogSheet_() {
   const state = {
     rows: [],
     staleValidation: true,
-    clearDataValidationsCalled: false
+    clearDataValidationsCalled: false,
+    fullRowValidationCleared: false,
+    maxColumns: 17
   };
 
   return {
@@ -4241,14 +4440,29 @@ function buildMockValidationBlockingLogSheet_() {
     get clearDataValidationsCalled() {
       return state.clearDataValidationsCalled;
     },
+    get fullRowValidationCleared() {
+      return state.fullRowValidationCleared;
+    },
+    getName() {
+      return CONFIG.sheets.logSheetName;
+    },
     getLastRow() {
       return state.rows.length;
+    },
+    getLastColumn() {
+      return 7;
+    },
+    getMaxColumns() {
+      return state.maxColumns;
     },
     getRange(row, col, rowCount, colCount) {
       return {
         clearDataValidations() {
-          state.staleValidation = false;
           state.clearDataValidationsCalled = true;
+          if (rowCount === 1 && col === 1 && colCount >= state.maxColumns) {
+            state.staleValidation = false;
+            state.fullRowValidationCleared = true;
+          }
           return this;
         },
         setValues(values) {
