@@ -129,11 +129,11 @@ function installDailyEodCacheWarmupTrigger_(deps) {
 }
 
 function isSummaryRefreshEdit_(e) {
-  return isSummaryCheckboxEditForHeader_(e, 'Refresh EOD');
+  return isSummaryCheckboxEditForHeader_(e, SummaryService.getRefreshEodHeader_());
 }
 
 function isSummarySendEmailEdit_(e) {
-  return isSummaryCheckboxColumnEditForHeader_(e, 'Send Email');
+  return isSummaryCheckboxColumnEditForHeader_(e, SummaryService.getSendEmailHeader_());
 }
 
 function getSummaryEditRoute_(e) {

@@ -77,7 +77,7 @@ function runLocalTestSuite_(suiteName, testCases) {
 function getLocalTestCases_(suite) {
   const allTests = [
     { name: 'Config has required blocks', fn: testConfigHasRequiredBlocks_, suite: 'core' },
-    { name: 'Summary config has email columns with Send Email at end', fn: testSummaryEmailConfig_, suite: 'core' },
+    { name: 'Summary config has Email checkbox at end', fn: testSummaryEmailConfig_, suite: 'core' },
     { name: 'Gmail query is correct', fn: testGmailQuery_, suite: 'core' },
     { name: 'B number OCR normalisation handles leading B misreads', fn: testBNumberOcrNormalisation_, suite: 'core' },
     { name: 'Order number normalisation accepts variable length', fn: testOrderNumberNormalisation_, suite: 'core' },
@@ -138,11 +138,27 @@ function getLocalTestCases_(suite) {
     { name: 'New internal sheets are hidden and protected', fn: testNewInternalSheetsAreHiddenAndProtected_, suite: 'sheet_setup' },
     { name: 'New internal sheet protections retain effective user', fn: testInternalSheetProtectionRetainsOnlyEffectiveUser_, suite: 'sheet_setup' },
     { name: 'Summary sheet removes only HX internal protection', fn: testSummaryProtectionCleanup_, suite: 'sheet_setup' },
-    { name: 'Summary setup applies Refresh EOD checkbox validation', fn: testSummaryCheckboxValidation_, suite: 'sheet_setup' },
-    { name: 'Summary setup applies Send Email checkbox validation', fn: testSummarySendEmailCheckboxValidation_, suite: 'sheet_setup' },
+    { name: 'Summary setup applies Refresh checkbox validation', fn: testSummaryCheckboxValidation_, suite: 'sheet_setup' },
+    { name: 'Summary setup applies Email checkbox validation', fn: testSummarySendEmailCheckboxValidation_, suite: 'sheet_setup' },
     { name: 'Summary setup migrates product columns without overwriting existing columns', fn: testSummarySetupMigratesProductColumns_, suite: 'sheet_setup' },
     { name: 'Summary setup migration is idempotent', fn: testSummarySetupMigrationIdempotent_, suite: 'sheet_setup' },
     { name: 'Summary setup keeps validations on live header columns', fn: testSummarySetupValidationPlacement_, suite: 'sheet_setup' },
+    { name: 'One-off product note parser parses Product Code', fn: testOneOffProductBackfillParsesProductCode_, suite: 'summary' },
+    { name: 'One-off product note parser parses Product Description', fn: testOneOffProductBackfillParsesProductDescription_, suite: 'summary' },
+    { name: 'One-off product note parser parses Vintage', fn: testOneOffProductBackfillParsesVintage_, suite: 'summary' },
+    { name: 'One-off product note parser parses Bottle Size', fn: testOneOffProductBackfillParsesBottleSize_, suite: 'summary' },
+    { name: 'One-off product backfill preserves existing values by default', fn: testOneOffProductBackfillSkipsExistingValues_, suite: 'summary' },
+    { name: 'One-off product backfill skips rows with no note', fn: testOneOffProductBackfillSkipsNoNote_, suite: 'summary' },
+    { name: 'One-off product backfill skips unparseable notes', fn: testOneOffProductBackfillSkipsUnparseableNote_, suite: 'summary' },
+    { name: 'One-off product backfill requires product headers', fn: testOneOffProductBackfillMissingHeaders_, suite: 'summary' },
+    { name: 'One-off note shortcut works in one call', fn: testOneOffProductBackfillNoteShortcutOneCall_, suite: 'summary' },
+    { name: 'One-off public refresh processes a batch', fn: testOneOffProductBackfillViaRefreshProcessesBatch_, suite: 'summary' },
+    { name: 'One-off public refresh stores state when rows remain', fn: testOneOffProductBackfillViaRefreshStoresState_, suite: 'summary' },
+    { name: 'One-off public refresh schedules one continuation trigger', fn: testOneOffProductBackfillViaRefreshSchedulesOneTrigger_, suite: 'summary' },
+    { name: 'One-off public refresh avoids duplicate triggers', fn: testOneOffProductBackfillViaRefreshAvoidsDuplicateTriggers_, suite: 'summary' },
+    { name: 'One-off refresh trigger continues stored state', fn: testOneOffProductBackfillTriggerContinuesState_, suite: 'summary' },
+    { name: 'One-off refresh completion clears trigger and state', fn: testOneOffProductBackfillCompletionClearsState_, suite: 'summary' },
+    { name: 'One-off refresh reset clears trigger and state', fn: testOneOffProductBackfillResetClearsState_, suite: 'summary' },
     { name: 'EOD summary context requires live header columns', fn: testEodSummaryContextRequiresLiveHeaders_, suite: 'summary' },
     { name: 'Log writer clears stale validation before append', fn: testLogWriterClearsStaleValidation_, suite: 'sheet_setup' },
     { name: 'Log writer expands rows before append', fn: testLogWriterExpandsRowsBeforeAppend_, suite: 'sheet_setup' },
@@ -299,10 +315,14 @@ function testConfigHasRequiredBlocks_() {
 function testSummaryEmailConfig_() {
   const columns = CONFIG.summary.columns;
   const headers = columns.map(column => column.header);
-  const refreshColumn = columns.find(column => column.header === 'Refresh EOD');
-  const sendColumn = columns[columns.length - 1];
+  const refreshHeader = summaryRefreshHeaderForTest_();
+  const sendHeader = summarySendEmailHeaderForTest_();
+  const refreshColumn = columns.find(column => column.header === refreshHeader);
+  const sendColumn = columns.find(column => column.header === sendHeader);
   const cNumberIndex = headers.indexOf('C Number');
   const bNumberIndex = headers.indexOf('B Number');
+  const refreshIndex = headers.indexOf(refreshHeader);
+  const sendIndex = headers.indexOf(sendHeader);
 
   ['Email Sent At', 'Email Sent To', 'Email Status', 'Email Error'].forEach(header => {
     assertEquals_(-1, headers.indexOf(header), `${header} must not be visible in Summary.`);
@@ -321,8 +341,8 @@ function testSummaryEmailConfig_() {
     'Bottle Size',
     'Date Completed',
     'SLA',
-    'Refresh EOD',
-    'Send Email'
+    refreshHeader,
+    sendHeader
   ].forEach((header, offset) => {
     assertEquals_(
       header,
@@ -332,11 +352,13 @@ function testSummaryEmailConfig_() {
   });
   assertTruthy_(headers.indexOf('Date Completed') > -1, 'Date Completed must remain in Summary.');
   assertTruthy_(headers.indexOf('SLA') > -1, 'SLA must remain in Summary.');
-  assertEquals_(true, refreshColumn.manual, 'Refresh EOD must be manual.');
-  assertEquals_('checkbox', refreshColumn.type, 'Refresh EOD must be a checkbox column.');
-  assertEquals_('Send Email', sendColumn.header, 'Send Email must be the final summary column.');
-  assertEquals_(true, sendColumn.manual, 'Send Email must be manual.');
-  assertEquals_('checkbox', sendColumn.type, 'Send Email must be a checkbox column.');
+  assertTruthy_(refreshIndex > -1, `${refreshHeader} must remain in Summary.`);
+  assertTruthy_(sendIndex > -1, `${sendHeader} must remain in Summary.`);
+  assertEquals_(refreshIndex + 1, sendIndex, `${sendHeader} must remain immediately after ${refreshHeader}.`);
+  assertEquals_(true, refreshColumn.manual, `${refreshHeader} must be manual.`);
+  assertEquals_('checkbox', refreshColumn.type, `${refreshHeader} must be a checkbox column.`);
+  assertEquals_(true, sendColumn.manual, `${sendHeader} must be manual.`);
+  assertEquals_('checkbox', sendColumn.type, `${sendHeader} must be a checkbox column.`);
   assertEquals_(
     'jesse.lang.04@gmail.com',
     CONFIG.summaryEmail.recipient,
@@ -2390,22 +2412,23 @@ function testSummaryCheckboxValidation_() {
   ensureLocalTestSetup_();
 
   const sheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const refreshHeader = summaryRefreshHeaderForTest_();
   const headers = sheet
     .getRange(CONFIG.summary.headerRow, 1, 1, sheet.getLastColumn())
     .getValues()[0];
-  const refreshCol = getColumnIndex_(headers, 'Refresh EOD');
+  const refreshCol = getColumnIndex_(headers, refreshHeader);
 
-  assertTruthy_(refreshCol > 0, 'Refresh EOD column missing.');
+  assertTruthy_(refreshCol > 0, `${refreshHeader} column missing.`);
 
   const rule = sheet
     .getRange(CONFIG.summary.headerRow + 1, refreshCol)
     .getDataValidation();
 
-  assertTruthy_(rule, 'Refresh EOD data validation missing.');
+  assertTruthy_(rule, `${refreshHeader} data validation missing.`);
   assertEquals_(
     SpreadsheetApp.DataValidationCriteria.CHECKBOX,
     rule.getCriteriaType(),
-    'Refresh EOD should use checkbox validation.'
+    `${refreshHeader} should use checkbox validation.`
   );
 }
 
@@ -2413,26 +2436,30 @@ function testSummarySendEmailCheckboxValidation_() {
   ensureLocalTestSetup_();
 
   const sheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const sendHeader = summarySendEmailHeaderForTest_();
   const headers = sheet
     .getRange(CONFIG.summary.headerRow, 1, 1, sheet.getLastColumn())
     .getValues()[0];
-  const sendCol = getColumnIndex_(headers, 'Send Email');
+  const sendCol = getColumnIndex_(headers, sendHeader);
 
-  assertTruthy_(sendCol > 0, 'Send Email column missing.');
+  assertTruthy_(sendCol > 0, `${sendHeader} column missing.`);
 
   const rule = sheet
     .getRange(CONFIG.summary.headerRow + 1, sendCol)
     .getDataValidation();
 
-  assertTruthy_(rule, 'Send Email data validation missing.');
+  assertTruthy_(rule, `${sendHeader} data validation missing.`);
   assertEquals_(
     SpreadsheetApp.DataValidationCriteria.CHECKBOX,
     rule.getCriteriaType(),
-    'Send Email should use checkbox validation.'
+    `${sendHeader} should use checkbox validation.`
   );
 }
 
 function testSummarySetupMigratesProductColumns_() {
+  const refreshHeader = summaryRefreshHeaderForTest_();
+  const sendHeader = summarySendEmailHeaderForTest_();
+  // Legacy headers verify setup migrates old deployed sheets to Refresh/Email.
   const oldHeaders = [
     '_Key',
     '*',
@@ -2495,8 +2522,8 @@ function testSummarySetupMigratesProductColumns_() {
       'Bottle Size',
       'Date Completed',
       'SLA',
-      'Refresh EOD',
-      'Send Email',
+      refreshHeader,
+      sendHeader,
       'Notes'
     ];
     const locationIndex = headers.indexOf('Location');
@@ -2516,8 +2543,8 @@ function testSummarySetupMigratesProductColumns_() {
     assertEquals_('', sheet.getDataValueByHeader('Bottle Size'), 'Inserted Bottle Size should be blank.');
     assertEquals_('2026-06-02', sheet.getDataValueByHeader('Date Completed'), 'Date Completed data should shift right.');
     assertEquals_(1.5, sheet.getDataValueByHeader('SLA'), 'SLA data should shift right.');
-    assertEquals_(true, sheet.getDataValueByHeader('Refresh EOD'), 'Refresh EOD data should shift right.');
-    assertEquals_(false, sheet.getDataValueByHeader('Send Email'), 'Send Email data should shift right.');
+    assertEquals_(true, sheet.getDataValueByHeader(refreshHeader), `${refreshHeader} data should shift right.`);
+    assertEquals_(false, sheet.getDataValueByHeader(sendHeader), `${sendHeader} data should shift right.`);
     assertEquals_('manual note column', sheet.getDataValueByHeader('Notes'), 'Later user columns must be preserved.');
     assertEquals_('Keep B note', sheet.getNoteByHeader('B Number'), 'B Number notes must stay intact.');
     assertEquals_(
@@ -2528,13 +2555,13 @@ function testSummarySetupMigratesProductColumns_() {
     assertEquals_('0.#', sheet.getNumberFormatByHeader('SLA'), 'SLA should keep number formatting after migration.');
     assertEquals_(
       SpreadsheetApp.DataValidationCriteria.CHECKBOX,
-      sheet.getValidationTypeByHeader('Refresh EOD'),
-      'Refresh EOD checkbox validation should be on the migrated column.'
+      sheet.getValidationTypeByHeader(refreshHeader),
+      `${refreshHeader} checkbox validation should be on the migrated column.`
     );
     assertEquals_(
       SpreadsheetApp.DataValidationCriteria.CHECKBOX,
-      sheet.getValidationTypeByHeader('Send Email'),
-      'Send Email checkbox validation should be on the migrated column.'
+      sheet.getValidationTypeByHeader(sendHeader),
+      `${sendHeader} checkbox validation should be on the migrated column.`
     );
 
     SummaryService.setupSummaryHeaders_(sheet);
@@ -2556,8 +2583,8 @@ function testSummarySetupMigratesProductColumns_() {
       'Bottle Size',
       'Date Completed',
       'SLA',
-      'Refresh EOD',
-      'Send Email'
+      refreshHeader,
+      sendHeader
     ].forEach(header => {
       assertEquals_(
         1,
@@ -2568,8 +2595,8 @@ function testSummarySetupMigratesProductColumns_() {
 
     assertEquals_('2026-06-02', sheet.getDataValueByHeader('Date Completed'), 'Date Completed data should survive repeated setup.');
     assertEquals_(1.5, sheet.getDataValueByHeader('SLA'), 'SLA data should survive repeated setup.');
-    assertEquals_(true, sheet.getDataValueByHeader('Refresh EOD'), 'Refresh EOD data should survive repeated setup.');
-    assertEquals_(false, sheet.getDataValueByHeader('Send Email'), 'Send Email data should survive repeated setup.');
+    assertEquals_(true, sheet.getDataValueByHeader(refreshHeader), `${refreshHeader} data should survive repeated setup.`);
+    assertEquals_(false, sheet.getDataValueByHeader(sendHeader), `${sendHeader} data should survive repeated setup.`);
     assertEquals_('manual note column', sheet.getDataValueByHeader('Notes'), 'Later user columns should survive repeated setup.');
   } finally {
     restoreConditionalFormatBuilder();
@@ -2577,6 +2604,9 @@ function testSummarySetupMigratesProductColumns_() {
 }
 
 function testSummarySetupMigrationIdempotent_() {
+  const refreshHeader = summaryRefreshHeaderForTest_();
+  const sendHeader = summarySendEmailHeaderForTest_();
+  // Legacy headers verify repeated setup keeps migrated columns stable.
   const oldHeaders = [
     '_Key',
     '*',
@@ -2628,8 +2658,8 @@ function testSummarySetupMigrationIdempotent_() {
     'Bottle Size',
     'Date Completed',
     'SLA',
-    'Refresh EOD',
-    'Send Email'
+    refreshHeader,
+    sendHeader
   ].forEach(header => {
     assertEquals_(
       1,
@@ -2640,6 +2670,9 @@ function testSummarySetupMigrationIdempotent_() {
 }
 
 function testSummarySetupValidationPlacement_() {
+  const refreshHeader = summaryRefreshHeaderForTest_();
+  const sendHeader = summarySendEmailHeaderForTest_();
+  // Legacy headers verify validations land on the migrated Refresh/Email columns.
   const oldHeaders = [
     '_Key',
     '*',
@@ -2717,19 +2750,291 @@ function testSummarySetupValidationPlacement_() {
 
     assertEquals_(
       SpreadsheetApp.DataValidationCriteria.CHECKBOX,
-      sheet.getValidationTypeByHeader('Refresh EOD'),
-      'Refresh EOD checkbox validation should be placed by header.'
+      sheet.getValidationTypeByHeader(refreshHeader),
+      `${refreshHeader} checkbox validation should be placed by header.`
     );
     assertEquals_(
       SpreadsheetApp.DataValidationCriteria.CHECKBOX,
-      sheet.getValidationTypeByHeader('Send Email'),
-      'Send Email checkbox validation should be placed by header.'
+      sheet.getValidationTypeByHeader(sendHeader),
+      `${sendHeader} checkbox validation should be placed by header.`
     );
 
     assertSummaryHeaderOrder_(sheet.getHeaderValues());
   } finally {
     restoreConditionalFormatBuilder();
   }
+}
+
+function testOneOffProductBackfillParsesProductCode_() {
+  const parsed = oneOffParseProductBackfillNote_(buildOneOffProductBackfillNote_());
+
+  assertEquals_('P001', parsed['Product Code'], 'Product Code should parse from note.');
+}
+
+function testOneOffProductBackfillParsesProductDescription_() {
+  const parsed = oneOffParseProductBackfillNote_(
+    ' product code : P001\nPRODUCT DESCRIPTION: Product One\nVintage: 2020\nBottle Size: 750ML'
+  );
+
+  assertEquals_(
+    'Product One',
+    parsed['Product Description'],
+    'Product Description should parse with tolerant label whitespace/case.'
+  );
+}
+
+function testOneOffProductBackfillParsesVintage_() {
+  const parsed = oneOffParseProductBackfillNote_(buildOneOffProductBackfillNote_());
+
+  assertEquals_('2020', parsed['Vintage'], 'Vintage should parse from note.');
+}
+
+function testOneOffProductBackfillParsesBottleSize_() {
+  const parsed = oneOffParseProductBackfillNote_(buildOneOffProductBackfillNote_());
+
+  assertEquals_('750ML', parsed['Bottle Size'], 'Bottle Size should parse from note.');
+}
+
+function testOneOffProductBackfillSkipsExistingValues_() {
+  const result = oneOffBuildProductBackfillFromNotes_(
+    buildOneOffProductBackfillHeaders_(),
+    [[
+      'TEST::KEY',
+      'B1234567',
+      'EXISTING',
+      '',
+      '',
+      ''
+    ]],
+    [[buildOneOffProductBackfillNote_()]]
+  );
+
+  assertEquals_(1, result.stats.rowsScanned, 'Existing-value test should scan one row.');
+  assertEquals_(0, result.stats.rowsUpdated, 'Conflicting existing values should not update.');
+  assertEquals_(1, result.stats.skippedExistingValues, 'Conflicting existing values should be counted.');
+  assertEquals_('EXISTING', result.rows[0][2], 'Existing Product Code should be preserved.');
+  assertEquals_('', result.rows[0][3], 'Skipped row should not partially fill Product Description.');
+}
+
+function testOneOffProductBackfillSkipsNoNote_() {
+  const result = oneOffBuildProductBackfillFromNotes_(
+    buildOneOffProductBackfillHeaders_(),
+    [[
+      'TEST::KEY',
+      'B1234567',
+      '',
+      '',
+      '',
+      ''
+    ]],
+    [['']]
+  );
+
+  assertEquals_(1, result.stats.rowsScanned, 'No-note test should scan one row.');
+  assertEquals_(0, result.stats.rowsUpdated, 'No-note row should not update.');
+  assertEquals_(1, result.stats.skippedNoNote, 'No-note row should be counted.');
+}
+
+function testOneOffProductBackfillSkipsUnparseableNote_() {
+  const result = oneOffBuildProductBackfillFromNotes_(
+    buildOneOffProductBackfillHeaders_(),
+    [[
+      'TEST::KEY',
+      'B1234567',
+      '',
+      '',
+      '',
+      ''
+    ]],
+    [['Product Code: P001\nVintage: 2020']]
+  );
+
+  assertEquals_(1, result.stats.rowsScanned, 'Unparseable-note test should scan one row.');
+  assertEquals_(0, result.stats.rowsUpdated, 'Unparseable note should not update.');
+  assertEquals_(1, result.stats.skippedUnparseableNote, 'Unparseable note should be counted.');
+}
+
+function testOneOffProductBackfillMissingHeaders_() {
+  let failed = false;
+
+  try {
+    oneOffBuildProductBackfillFromNotes_(
+      ['_Key', 'B Number', 'Product Code', 'Product Description', 'Vintage'],
+      [],
+      []
+    );
+  } catch (err) {
+    failed = true;
+    assertContains_(
+      String(err),
+      'Bottle Size',
+      'Missing-header error should name the missing product column.'
+    );
+  }
+
+  assertEquals_(true, failed, 'Missing required product headers should fail loudly.');
+}
+
+function testOneOffProductBackfillNoteShortcutOneCall_() {
+  const env = buildOneOffProductBackfillRefreshEnv_({
+    rows: [[
+      'TEST::KEY',
+      'B1234567',
+      '',
+      '',
+      '',
+      ''
+    ]]
+  });
+  const bCol = env.sheet.getColumnByHeader('B Number');
+
+  env.sheet
+    .getRange(CONFIG.summary.headerRow + 1, bCol)
+    .setNote(buildOneOffProductBackfillNote_());
+
+  const result = oneOffBackfillProductColumnsFromBNumberNotes({
+    spreadsheet: env.spreadsheet
+  });
+
+  assertEquals_(1, result.rowsUpdated, 'Note shortcut should update one row in one call.');
+  assertEquals_(
+    'P001',
+    env.sheet.getDataValueByHeader('Product Code'),
+    'Note shortcut should write Product Code.'
+  );
+  assertEquals_(
+    'Product One',
+    env.sheet.getDataValueByHeader('Product Description'),
+    'Note shortcut should write Product Description.'
+  );
+}
+
+function testOneOffProductBackfillViaRefreshProcessesBatch_() {
+  const env = buildOneOffProductBackfillRefreshEnv_({
+    rows: [
+      ['TEST::KEY1', 'B1234567', '', '', '', ''],
+      ['TEST::KEY2', 'B1234568', '', '', '', '']
+    ],
+    batchSize: 1
+  });
+  const calls = withMockOneOffRefresh_(env, () =>
+    oneOffBackfillProductColumnsViaRefresh(env.options)
+  );
+
+  assertEquals_(1, calls.length, 'Public refresh should process one row in the configured batch.');
+  assertEquals_(
+    CONFIG.summary.headerRow + 1,
+    calls[0],
+    'Public refresh should start with the first data sheet row number.'
+  );
+}
+
+function testOneOffProductBackfillViaRefreshStoresState_() {
+  const env = buildOneOffProductBackfillRefreshEnv_({
+    rows: [
+      ['TEST::KEY1', 'B1234567', '', '', '', ''],
+      ['TEST::KEY2', 'B1234568', '', '', '', '']
+    ],
+    batchSize: 1
+  });
+
+  withMockOneOffRefresh_(env, () => oneOffBackfillProductColumnsViaRefresh(env.options));
+
+  const state = JSON.parse(env.properties.getProperty(ONE_OFF_PRODUCT_BACKFILL_STATE_KEY));
+
+  assertEquals_(CONFIG.summary.headerRow + 2, state.nextRow, 'State should resume at the next row.');
+  assertEquals_(1, state.rowsScanned, 'State should store scanned count.');
+  assertEquals_(1, state.rowsRefreshed, 'State should store refreshed count.');
+}
+
+function testOneOffProductBackfillViaRefreshSchedulesOneTrigger_() {
+  const env = buildOneOffProductBackfillRefreshEnv_({
+    rows: [
+      ['TEST::KEY1', 'B1234567', '', '', '', ''],
+      ['TEST::KEY2', 'B1234568', '', '', '', '']
+    ],
+    batchSize: 1
+  });
+
+  withMockOneOffRefresh_(env, () => oneOffBackfillProductColumnsViaRefresh(env.options));
+
+  assertEquals_(1, env.triggers.length, 'Public refresh should leave one continuation trigger.');
+  assertEquals_(
+    ONE_OFF_PRODUCT_BACKFILL_TRIGGER_HANDLER,
+    env.triggers[0].getHandlerFunction(),
+    'Continuation trigger should use the one-off trigger handler.'
+  );
+}
+
+function testOneOffProductBackfillViaRefreshAvoidsDuplicateTriggers_() {
+  const env = buildOneOffProductBackfillRefreshEnv_({
+    rows: [
+      ['TEST::KEY1', 'B1234567', '', '', '', ''],
+      ['TEST::KEY2', 'B1234568', '', '', '', ''],
+      ['TEST::KEY3', 'B1234569', '', '', '', '']
+    ],
+    batchSize: 1
+  });
+
+  withMockOneOffRefresh_(env, () => oneOffBackfillProductColumnsViaRefresh(env.options));
+  withMockOneOffRefresh_(env, () => oneOffBackfillProductColumnsViaRefresh(env.options));
+
+  assertEquals_(1, env.activeTriggerCount(), 'Only one active continuation trigger should remain.');
+}
+
+function testOneOffProductBackfillTriggerContinuesState_() {
+  const env = buildOneOffProductBackfillRefreshEnv_({
+    rows: [
+      ['TEST::KEY1', 'B1234567', '', '', '', ''],
+      ['TEST::KEY2', 'B1234568', '', '', '', ''],
+      ['TEST::KEY3', 'B1234569', '', '', '', '']
+    ],
+    batchSize: 1
+  });
+
+  withMockOneOffRefresh_(env, () => oneOffBackfillProductColumnsViaRefresh(env.options));
+  const calls = withMockOneOffRefresh_(env, () => oneOffProductBackfillViaRefreshTrigger_(env.options));
+
+  assertEquals_(1, calls.length, 'Trigger handler should process one stored-state row.');
+  assertEquals_(CONFIG.summary.headerRow + 2, calls[0], 'Trigger handler should continue from stored nextRow.');
+}
+
+function testOneOffProductBackfillCompletionClearsState_() {
+  const env = buildOneOffProductBackfillRefreshEnv_({
+    rows: [
+      ['TEST::KEY1', 'B1234567', '', '', '', '']
+    ],
+    batchSize: 10
+  });
+  const result = withMockOneOffRefresh_(env, () =>
+    oneOffBackfillProductColumnsViaRefresh(env.options)
+  ).result;
+
+  assertEquals_(true, result.complete, 'Single-row refresh should complete.');
+  assertEquals_(null, env.properties.getProperty(ONE_OFF_PRODUCT_BACKFILL_STATE_KEY), 'Complete refresh should clear state.');
+  assertEquals_(0, env.activeTriggerCount(), 'Complete refresh should clear temporary triggers.');
+}
+
+function testOneOffProductBackfillResetClearsState_() {
+  const env = buildOneOffProductBackfillRefreshEnv_({
+    rows: [
+      ['TEST::KEY1', 'B1234567', '', '', '', ''],
+      ['TEST::KEY2', 'B1234568', '', '', '', '']
+    ],
+    batchSize: 1
+  });
+
+  withMockOneOffRefresh_(env, () => oneOffBackfillProductColumnsViaRefresh(env.options));
+
+  assertTruthy_(
+    env.properties.getProperty(ONE_OFF_PRODUCT_BACKFILL_STATE_KEY),
+    'Precondition: refresh should have stored state.'
+  );
+
+  oneOffResetProductBackfillViaRefreshState(env.options);
+
+  assertEquals_(null, env.properties.getProperty(ONE_OFF_PRODUCT_BACKFILL_STATE_KEY), 'Reset should clear state.');
+  assertEquals_(0, env.activeTriggerCount(), 'Reset should clear temporary triggers.');
 }
 
 function testLogWriterClearsStaleValidation_() {
@@ -2843,8 +3148,8 @@ function testEodSummaryContextRequiresLiveHeaders_() {
     'Bottle Size',
     'Date Completed',
     'SLA',
-    'Refresh EOD',
-    'Send Email'
+    summaryRefreshHeaderForTest_(),
+    summarySendEmailHeaderForTest_()
   ];
 
   requiredHeaders.forEach(headerName => {
@@ -2940,7 +3245,7 @@ function testSummaryRefreshEditFilter_() {
       col: refreshCol,
       value: 'TRUE'
     })),
-    'Checked Refresh EOD data-row edit should be accepted.'
+    'Checked Refresh data-row edit should be accepted.'
   );
 
   assertEquals_(
@@ -2950,7 +3255,7 @@ function testSummaryRefreshEditFilter_() {
       col: refreshCol,
       value: 'TRUE'
     })),
-    'Edit router should route Refresh EOD edits.'
+    'Edit router should route Refresh edits.'
   );
 }
 
@@ -3115,7 +3420,7 @@ function testSummarySendEmailEditFilter_() {
       col: sendCol,
       value: 'FALSE'
     })),
-    'Unchecked Send Email edits should be accepted so sent rows can be restored.'
+    'Unchecked Email edits should be accepted so sent rows can be restored.'
   );
 
   assertEquals_(
@@ -3136,7 +3441,7 @@ function testSummarySendEmailEditFilter_() {
       col: sendCol,
       value: 'TRUE'
     })),
-    'Checked Send Email data-row edit should be accepted.'
+    'Checked Email data-row edit should be accepted.'
   );
 
   assertEquals_(
@@ -3146,7 +3451,7 @@ function testSummarySendEmailEditFilter_() {
       col: sendCol,
       value: 'TRUE'
     })),
-    'Edit router should route Send Email edits.'
+    'Edit router should route Email edits.'
   );
 
   assertEquals_(
@@ -3156,11 +3461,12 @@ function testSummarySendEmailEditFilter_() {
       col: sendCol,
       value: 'FALSE'
     })),
-    'Edit router should route unchecked Send Email edits.'
+    'Edit router should route unchecked Email edits.'
   );
 }
 
 function testSummarySendEmailSendsValidRowOnce_() {
+  const sendHeader = summarySendEmailHeaderForTest_();
   const result = runSummaryEmailServiceTest_({});
   const ledgerEntry = getOnlySummaryEmailLedgerEntry_(result.ledger);
 
@@ -3177,13 +3483,14 @@ function testSummarySendEmailSendsValidRowOnce_() {
     ledgerEntry.recipient,
     'Successful send should record recipient in ledger.'
   );
-  assertEquals_(true, result.sheet.getValueByHeader('Send Email'), 'Successful send should leave checkbox checked.');
+  assertEquals_(true, result.sheet.getValueByHeader(sendHeader), 'Successful send should leave checkbox checked.');
   assertEquals_(1, result.sheet.protections.length, 'Successful send should best-effort protect the sent checkbox.');
-  assertEquals_('Send Email', result.sheet.protections[0].headerName, 'Sent checkbox protection should target Send Email.');
+  assertEquals_(sendHeader, result.sheet.protections[0].headerName, `Sent checkbox protection should target ${sendHeader}.`);
   assertEquals_('', ledgerEntry.error, 'Successful send should clear ledger error.');
 }
 
 function testSummarySendEmailSentLedgerPreventsDuplicate_() {
+  const sendHeader = summarySendEmailHeaderForTest_();
   const sendKey = buildTestSummaryEmailSendKey_();
   const result = runSummaryEmailServiceTest_({
     ledger: {
@@ -3196,14 +3503,15 @@ function testSummarySendEmailSentLedgerPreventsDuplicate_() {
 
   assertEquals_('already_sent', result.sendResult.status, 'SENT ledger status should skip send.');
   assertEquals_(0, result.sentEmails.length, 'SENT ledger status should not send.');
-  assertEquals_(true, result.sheet.getValueByHeader('Send Email'), 'Already sent row should remain checked.');
+  assertEquals_(true, result.sheet.getValueByHeader(sendHeader), 'Already sent row should remain checked.');
 }
 
 function testSummarySendEmailManualUncheckAfterSentRestored_() {
+  const sendHeader = summarySendEmailHeaderForTest_();
   const sendKey = buildTestSummaryEmailSendKey_();
   const result = runSummaryEmailServiceTest_({
     values: {
-      'Send Email': false
+      [sendHeader]: false
     },
     ledger: {
       [sendKey]: {
@@ -3216,10 +3524,11 @@ function testSummarySendEmailManualUncheckAfterSentRestored_() {
 
   assertEquals_('already_sent', result.sendResult.status, 'Sent ledger status should skip send.');
   assertEquals_(0, result.sentEmails.length, 'Manual uncheck after sent should not resend.');
-  assertEquals_(true, result.sheet.getValueByHeader('Send Email'), 'Manual uncheck after sent should be restored.');
+  assertEquals_(true, result.sheet.getValueByHeader(sendHeader), 'Manual uncheck after sent should be restored.');
 }
 
 function testSummarySendEmailEditHandlerRestoresSentUncheckWithoutDuplicate_() {
+  const sendHeader = summarySendEmailHeaderForTest_();
   const sendKey = buildTestSummaryEmailSendKey_();
   const sentEmails = [];
   const ledger = {
@@ -3233,13 +3542,13 @@ function testSummarySendEmailEditHandlerRestoresSentUncheckWithoutDuplicate_() {
   };
   const sheet = buildMockSummaryEmailSheet_({
     values: {
-      'Send Email': false
+      [sendHeader]: false
     }
   });
   const lock = buildMockLock_();
   const range = sheet.getRange(
     CONFIG.summary.headerRow + 1,
-    getColumnIndex_(['_Key', ...CONFIG.summary.columns.map(column => column.header)], 'Send Email')
+    getColumnIndex_(['_Key', ...CONFIG.summary.columns.map(column => column.header)], sendHeader)
   );
 
   SummaryEmailService.setMailSenderForTest_(email => {
@@ -3260,13 +3569,14 @@ function testSummarySendEmailEditHandlerRestoresSentUncheckWithoutDuplicate_() {
     SummaryEmailService.resetTestDoubles_();
   }
 
-  assertEquals_(true, lock.released, 'Send Email edit handler should release the lock.');
+  assertEquals_(true, lock.released, 'Email edit handler should release the lock.');
   assertEquals_(0, sentEmails.length, 'Restoring a sent checkbox should not send a duplicate email.');
-  assertEquals_(true, sheet.getValueByHeader('Send Email'), 'Sent unchecked edit should be immediately restored.');
+  assertEquals_(true, sheet.getValueByHeader(sendHeader), 'Sent unchecked edit should be immediately restored.');
   assertEquals_(SummaryEmailService.STATUS_SENT, ledger[sendKey].status, 'Sent ledger entry should remain successful.');
 }
 
 function testSummarySendEmailBlockingStatusPreventsDuplicate_() {
+  const sendHeader = summarySendEmailHeaderForTest_();
   [
     SummaryEmailService.STATUS_SENDING,
     SummaryEmailService.STATUS_UNKNOWN,
@@ -3285,11 +3595,12 @@ function testSummarySendEmailBlockingStatusPreventsDuplicate_() {
 
     assertEquals_('blocked', result.sendResult.status, `${status} should block send.`);
     assertEquals_(0, result.sentEmails.length, `${status} should not send.`);
-    assertEquals_(false, result.sheet.getValueByHeader('Send Email'), `${status} should reset checkbox.`);
+    assertEquals_(false, result.sheet.getValueByHeader(sendHeader), `${status} should reset checkbox.`);
   });
 }
 
 function testSummarySendEmailValidationFailureResets_() {
+  const sendHeader = summarySendEmailHeaderForTest_();
   const result = runSummaryEmailServiceTest_({
     values: {
       'PDF': ''
@@ -3312,10 +3623,11 @@ function testSummarySendEmailValidationFailureResets_() {
     'PDF link',
     'Validation failure should write missing PDF link error to ledger.'
   );
-  assertEquals_(false, result.sheet.getValueByHeader('Send Email'), 'Validation failure should reset checkbox.');
+  assertEquals_(false, result.sheet.getValueByHeader(sendHeader), 'Validation failure should reset checkbox.');
 }
 
 function testSummarySendEmailMissingPdfBlocks_() {
+  const sendHeader = summarySendEmailHeaderForTest_();
   const result = runSummaryEmailServiceTest_({
     driveFileGetter() {
       throw new Error('missing file');
@@ -3329,7 +3641,7 @@ function testSummarySendEmailMissingPdfBlocks_() {
     'missing file',
     'Unreadable PDF should write Drive error to ledger.'
   );
-  assertEquals_(false, result.sheet.getValueByHeader('Send Email'), 'Unreadable PDF should reset checkbox.');
+  assertEquals_(false, result.sheet.getValueByHeader(sendHeader), 'Unreadable PDF should reset checkbox.');
 }
 
 function testSummarySendEmailMissingProductFieldsBlock_() {
@@ -3346,7 +3658,7 @@ function testSummarySendEmailMissingProductFieldsBlock_() {
     assertSummaryEmailMissingFieldsBlocked_(
       runSummaryEmailServiceTest_({ values }),
       [header],
-      `Missing ${header} should block Send Email.`
+      `Missing ${header} should block Email.`
     );
   });
 }
@@ -3365,7 +3677,7 @@ function testSummarySendEmailMissingLinksBlock_() {
       }
     }),
     ['PDF link'],
-    'Missing PDF link should block Send Email.'
+    'Missing PDF link should block Email.'
   );
 
   assertSummaryEmailMissingFieldsBlocked_(
@@ -3373,17 +3685,19 @@ function testSummarySendEmailMissingLinksBlock_() {
       spreadsheetUrl: ''
     }),
     ['Spreadsheet link'],
-    'Missing spreadsheet link should block Send Email.'
+    'Missing spreadsheet link should block Email.'
   );
 }
 
 function testSummarySendEmailNonDisplayedFieldsDoNotBlock_() {
+  const refreshHeader = summaryRefreshHeaderForTest_();
+  const sendHeader = summarySendEmailHeaderForTest_();
   const result = runSummaryEmailServiceTest_({
     values: {
       'Date Completed': '',
       'SLA': '',
-      'Refresh EOD': '',
-      'Send Email': true
+      [refreshHeader]: '',
+      [sendHeader]: true
     },
     notesByHeader: {
       '*': '',
@@ -3391,7 +3705,7 @@ function testSummarySendEmailNonDisplayedFieldsDoNotBlock_() {
     }
   });
 
-  assertEquals_('sent', result.sendResult.status, 'Missing non-displayed fields should not block Send Email.');
+  assertEquals_('sent', result.sendResult.status, 'Missing non-displayed fields should not block Email.');
   assertEquals_(1, result.sentEmails.length, 'Missing non-displayed fields should still allow one email.');
   assertEquals_(
     SummaryEmailService.STATUS_SENT,
@@ -3456,6 +3770,7 @@ function testSummarySendEmailAttachesPdfBlob_() {
 }
 
 function testSummarySendEmailExceptionBlocksRetry_() {
+  const sendHeader = summarySendEmailHeaderForTest_();
   const result = runSummaryEmailServiceTest_({
     mailSender() {
       throw new Error('forced send failure');
@@ -3474,7 +3789,7 @@ function testSummarySendEmailExceptionBlocksRetry_() {
     'forced send failure',
     'Send exception should write ledger error.'
   );
-  assertEquals_(false, result.sheet.getValueByHeader('Send Email'), 'Send exception should reset checkbox.');
+  assertEquals_(false, result.sheet.getValueByHeader(sendHeader), 'Send exception should reset checkbox.');
 }
 
 function testCoordinatorRefreshProcessesOneRow_() {
@@ -3575,7 +3890,7 @@ function testCoordinatorRefreshWritesProductTupleCells_() {
     restore();
   }
 
-  assertSummaryProductTupleWritten_(sheet, 'Refresh EOD should write product tuple cells.');
+  assertSummaryProductTupleWritten_(sheet, 'Refresh should write product tuple cells.');
 }
 
 function testCoordinatorAppendWritesProductTupleCells_() {
@@ -4452,6 +4767,137 @@ function assertSummaryRowProductTupleWritten_(sheet, rowNumber, messagePrefix) {
   );
 }
 
+function buildOneOffProductBackfillHeaders_() {
+  return [
+    '_Key',
+    'B Number',
+    'Product Code',
+    'Product Description',
+    'Vintage',
+    'Bottle Size'
+  ];
+}
+
+function buildOneOffProductBackfillNote_() {
+  return [
+    'Product Code: P001',
+    'Product Description: Product One',
+    'Vintage: 2020',
+    'Bottle Size: 750ML'
+  ].join('\n');
+}
+
+function buildOneOffProductBackfillRefreshEnv_(settings) {
+  const options = settings || {};
+  const sheet = buildMockMigratableSummarySheet_(
+    buildOneOffProductBackfillHeaders_(),
+    options.rows || []
+  );
+  const properties = buildMockOneOffProperties_();
+  const triggers = [];
+  const scriptApp = buildMockOneOffScriptApp_(triggers);
+  const spreadsheet = {
+    getSheetByName(name) {
+      return name === CONFIG.summary.sheetName ? sheet : null;
+    }
+  };
+
+  return {
+    sheet,
+    spreadsheet,
+    properties,
+    triggers,
+    scriptApp,
+    options: {
+      spreadsheet,
+      properties,
+      scriptApp,
+      batchSize: options.batchSize || 1,
+      triggerAfterMs: 1
+    },
+    activeTriggerCount() {
+      return triggers.filter(trigger => !trigger.deleted).length;
+    }
+  };
+}
+
+function buildMockOneOffProperties_() {
+  const values = {};
+
+  return {
+    getProperty(key) {
+      return Object.prototype.hasOwnProperty.call(values, key) ? values[key] : null;
+    },
+    setProperty(key, value) {
+      values[key] = String(value);
+    },
+    deleteProperty(key) {
+      delete values[key];
+    }
+  };
+}
+
+function buildMockOneOffScriptApp_(triggers) {
+  let sequence = 0;
+
+  return {
+    getProjectTriggers() {
+      return triggers.filter(trigger => !trigger.deleted);
+    },
+    deleteTrigger(trigger) {
+      trigger.deleted = true;
+    },
+    newTrigger(handlerName) {
+      const trigger = {
+        handlerName,
+        afterMs: 0,
+        deleted: false,
+        uniqueId: `ONE_OFF_TRIGGER_${++sequence}`,
+        getHandlerFunction() {
+          return this.handlerName;
+        },
+        getUniqueId() {
+          return this.uniqueId;
+        }
+      };
+
+      return {
+        timeBased() {
+          return this;
+        },
+        after(ms) {
+          trigger.afterMs = ms;
+          return this;
+        },
+        create() {
+          triggers.push(trigger);
+          return trigger;
+        }
+      };
+    }
+  };
+}
+
+function withMockOneOffRefresh_(env, fn) {
+  const originalRefresh = EodReportCoordinator.refreshSummaryRow;
+  const calls = [];
+
+  EodReportCoordinator.refreshSummaryRow = (sheet, rowNumber) => {
+    calls.push(rowNumber);
+    const headers = sheet.getHeaderValues();
+    const productCol = getColumnIndex_(headers, 'Product Code');
+
+    sheet.getRange(rowNumber, productCol).setValue(`P${rowNumber}`);
+  };
+
+  try {
+    calls.result = fn();
+    return calls;
+  } finally {
+    EodReportCoordinator.refreshSummaryRow = originalRefresh;
+  }
+}
+
 function assertSummaryHeaderOrder_(headers) {
   const expected = [
     'Location',
@@ -4463,8 +4909,8 @@ function assertSummaryHeaderOrder_(headers) {
     'Bottle Size',
     'Date Completed',
     'SLA',
-    'Refresh EOD',
-    'Send Email'
+    summaryRefreshHeaderForTest_(),
+    summarySendEmailHeaderForTest_()
   ];
   const locationIndex = headers.indexOf('Location');
 
@@ -4477,6 +4923,14 @@ function assertSummaryHeaderOrder_(headers) {
       `${header} should remain in the required Summary order.`
     );
   });
+}
+
+function summaryRefreshHeaderForTest_() {
+  return SummaryService.getRefreshEodHeader_();
+}
+
+function summarySendEmailHeaderForTest_() {
+  return SummaryService.getSendEmailHeader_();
 }
 
 function buildMockValidationRule_(criteriaType) {
@@ -4963,7 +5417,7 @@ function buildMockSummaryRefreshEditEvent_(options) {
   const headers = new Array(Math.max(refreshCol, options.col || refreshCol)).fill('');
 
   headers[0] = '_Key';
-  headers[refreshCol - 1] = 'Refresh EOD';
+  headers[refreshCol - 1] = summaryRefreshHeaderForTest_();
 
   const sheet = buildMockSummarySheet_(options.sheetName, headers);
   const range = {
@@ -4989,7 +5443,7 @@ function buildMockSummarySendEmailEditEvent_(options) {
   const headers = new Array(Math.max(sendCol, options.col || sendCol)).fill('');
 
   headers[0] = '_Key';
-  headers[sendCol - 1] = 'Send Email';
+  headers[sendCol - 1] = summarySendEmailHeaderForTest_();
 
   const sheet = buildMockSummarySheet_(options.sheetName, headers);
   const range = {
@@ -5084,11 +5538,12 @@ function getOnlySummaryEmailLedgerEntry_(ledger) {
 }
 
 function assertSummaryEmailMissingFieldsBlocked_(result, missingFields, message) {
+  const sendHeader = summarySendEmailHeaderForTest_();
   const ledgerEntry = getOnlySummaryEmailLedgerEntry_(result.ledger);
 
   assertEquals_('validation_failed', result.sendResult.status, message);
   assertEquals_(0, result.sentEmails.length, `${message} Email should not be sent.`);
-  assertEquals_(false, result.sheet.getValueByHeader('Send Email'), `${message} Send Email checkbox should reset unchecked.`);
+  assertEquals_(false, result.sheet.getValueByHeader(sendHeader), `${message} ${sendHeader} checkbox should reset unchecked.`);
   assertEquals_(
     SummaryEmailService.STATUS_VALIDATION_FAILED,
     ledgerEntry.status,
@@ -5116,6 +5571,8 @@ function assertSummaryEmailMissingFieldsBlocked_(result, missingFields, message)
 
 function buildMockSummaryEmailSheet_(options) {
   const settings = options || {};
+  const refreshHeader = summaryRefreshHeaderForTest_();
+  const sendHeader = summarySendEmailHeaderForTest_();
   const headers = [
     '_Key',
     ...CONFIG.summary.columns.map(column => column.header)
@@ -5141,12 +5598,12 @@ function buildMockSummaryEmailSheet_(options) {
       'Bottle Size': '750ML',
       'Date Completed': '2026-06-01',
       'SLA': '0.5',
-      'Refresh EOD': false,
+      [refreshHeader]: false,
       'Email Sent At': '',
       'Email Sent To': '',
       'Email Status': '',
       'Email Error': '',
-      'Send Email': true
+      [sendHeader]: true
     };
 
     const overrides = settings.values || {};

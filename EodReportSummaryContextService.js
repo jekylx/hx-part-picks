@@ -17,8 +17,8 @@ const EodReportSummaryContextService = {
       'Bottle Size',
       'Date Completed',
       'SLA',
-      'Refresh EOD',
-      'Send Email'
+      SummaryService.getRefreshEodHeader_(),
+      SummaryService.getSendEmailHeader_()
     ];
 
     requiredHeaders.forEach(headerName => {

@@ -31,9 +31,10 @@ const SummaryEmailService = {
 
     const context = this.createRowContext_(sheet, rowNumber);
     const sentEntry = this.getSentLedgerEntryForContext_(context);
+    const sendEmailHeader = this.getSendEmailHeader_();
 
     if (sentEntry) {
-      this.setValue_(context, 'Send Email', true);
+      this.setValue_(context, sendEmailHeader, true);
       this.protectSentEmailCells_(context);
       return {
         status: 'already_sent'
@@ -44,7 +45,7 @@ const SummaryEmailService = {
     const existingEntry = this.getLedgerEntry_(sendKey);
 
     if (existingEntry && this.isDuplicateBlockingStatus_(existingEntry.status)) {
-      this.setValue_(context, 'Send Email', false);
+      this.setValue_(context, sendEmailHeader, false);
       return {
         status: 'blocked'
       };
@@ -59,7 +60,7 @@ const SummaryEmailService = {
         status: this.STATUS_VALIDATION_FAILED,
         error: this.stringifyError_(err)
       });
-      this.setValue_(context, 'Send Email', false);
+      this.setValue_(context, sendEmailHeader, false);
       return {
         status: 'validation_failed',
         error: this.stringifyError_(err)
@@ -87,7 +88,7 @@ const SummaryEmailService = {
         subject: email.subject,
         error: ''
       });
-      this.setValue_(context, 'Send Email', true);
+      this.setValue_(context, sendEmailHeader, true);
 
       this.protectSentEmailCells_(context);
 
@@ -103,7 +104,7 @@ const SummaryEmailService = {
         subject: email.subject,
         error: this.stringifyError_(err)
       });
-      this.setValue_(context, 'Send Email', false);
+      this.setValue_(context, sendEmailHeader, false);
 
       return {
         status: 'send_failed_blocked',
@@ -117,15 +118,16 @@ const SummaryEmailService = {
 
     const context = this.createRowContext_(sheet, rowNumber);
     const sentEntry = this.getSentLedgerEntryForContext_(context);
+    const sendEmailHeader = this.getSendEmailHeader_();
 
     if (!sentEntry) {
-      this.setValue_(context, 'Send Email', false);
+      this.setValue_(context, sendEmailHeader, false);
       return {
         status: 'not_sent'
       };
     }
 
-    this.setValue_(context, 'Send Email', true);
+    this.setValue_(context, sendEmailHeader, true);
     this.protectSentEmailCells_(context);
 
     return {
@@ -218,6 +220,10 @@ const SummaryEmailService = {
     return headers.indexOf(headerName) + 1;
   },
 
+  getSendEmailHeader_() {
+    return SummaryService.getSendEmailHeader_();
+  },
+
   isDuplicateBlockingStatus_(status) {
     const normalized = this.normalizeStatus_(status);
 
@@ -272,7 +278,6 @@ const SummaryEmailService = {
       context.displayValue('Order No.') || context.value('Order No.'),
       '(blank order)'
     );
-
     return `HX Part Pick: ${member} - ${order}`;
   },
 
@@ -285,11 +290,7 @@ const SummaryEmailService = {
   buildBody_(context, pdfUrl) {
     const spreadsheetUrl = this.getSpreadsheetUrl_();
     const detailHeaders = this.getEmailDetailHeaders_();
-    const lines = [
-      'HX Part Pick',
-      '',
-      'Row Details:'
-    ];
+    const lines = ['HX Part Pick', ''];
 
     detailHeaders.forEach(header => {
       if (context.columnIndex(header) <= 0) {
@@ -307,6 +308,8 @@ const SummaryEmailService = {
   },
 
   getEmailDetailHeaders_() {
+    // Keep this list explicit: these displayed fields are the outbound email
+    // contract, and missing product fields should block sends until reviewed.
     return [
       'Carrier',
       'State',
@@ -759,7 +762,7 @@ const SummaryEmailService = {
 
   protectSentEmailCells_(context) {
     [
-      'Send Email'
+      this.getSendEmailHeader_()
     ].forEach(headerName => {
       try {
         const range = context.range(headerName);

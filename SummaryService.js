@@ -183,8 +183,8 @@ const SummaryService = {
       'Bottle Size',
       'Date Completed',
       'SLA',
-      'Refresh EOD',
-      'Send Email'
+      this.getRefreshEodHeader_(),
+      this.getSendEmailHeader_()
     ];
 
     protectedSequence.forEach((header, index) => {
@@ -208,7 +208,20 @@ const SummaryService = {
   placeSummaryColumn_(sheet, header, targetCol) {
     const headerRow = this.summaryHeaderRow_();
     let headers = this.getSheetHeaders_(sheet).map(value => String(value || '').trim());
+    const aliases = this.getSummaryHeaderAliases_();
+    const aliasHeaders = aliases[header] || [];
     let currentCol = headers.indexOf(header) + 1;
+
+    if (currentCol <= 0) {
+      for (let index = 0; index < aliasHeaders.length; index++) {
+        currentCol = headers.indexOf(aliasHeaders[index]) + 1;
+
+        if (currentCol > 0) {
+          sheet.getRange(headerRow, currentCol).setValue(header);
+          break;
+        }
+      }
+    }
 
     if (currentCol === targetCol) {
       sheet.getRange(headerRow, targetCol).setValue(header);
@@ -233,6 +246,35 @@ const SummaryService = {
     }
 
     sheet.getRange(headerRow, targetCol).setValue(header);
+  },
+
+  getSummaryHeaderAliases_() {
+    // Keep old deployed sheet headers usable while moving the visible operator
+    // labels to shorter Refresh/Email names.
+    return {
+      [this.getRefreshEodHeader_()]: ['Refresh EOD'],
+      [this.getSendEmailHeader_()]: ['Send Email']
+    };
+  },
+
+  getRefreshEodHeader_() {
+    const checkboxColumns = CONFIG.summary.columns.filter(column =>
+      column.manual === true &&
+      column.type === 'checkbox'
+    );
+
+    return checkboxColumns[0] ? checkboxColumns[0].header : 'Refresh EOD';
+  },
+
+  getSendEmailHeader_() {
+    const checkboxColumns = CONFIG.summary.columns.filter(column =>
+      column.manual === true &&
+      column.type === 'checkbox'
+    );
+
+    return checkboxColumns.length > 0
+      ? checkboxColumns[checkboxColumns.length - 1].header
+      : 'Send Email';
   },
 
   getConfiguredSummaryHeaders_() {
@@ -485,8 +527,8 @@ const SummaryService = {
       'Bottle Size',
       'Date Completed',
       'SLA',
-      'Refresh EOD',
-      'Send Email'
+      this.getRefreshEodHeader_(),
+      this.getSendEmailHeader_()
     ].forEach(header => {
       const col = headers.indexOf(header) + 1;
 
@@ -512,15 +554,16 @@ const SummaryService = {
       'Email Error': true
     };
     const headers = this.getSheetHeaders_(sheet);
+    const configuredSendEmailHeader = this.getSendEmailHeader_();
     const configuredSendEmailColumn =
-      this.getConfiguredSummaryHeaders_().indexOf('Send Email') + 1;
+      this.getConfiguredSummaryHeaders_().indexOf(configuredSendEmailHeader) + 1;
 
     headers.forEach((header, index) => {
       const text = String(header || '').trim();
       const column = index + 1;
       const isStaleOperationalColumn = !!staleHeaders[text];
       const isDuplicateSendEmailColumn =
-        text === 'Send Email' && column !== configuredSendEmailColumn;
+        text === configuredSendEmailHeader && column !== configuredSendEmailColumn;
 
       if (!isStaleOperationalColumn && !isDuplicateSendEmailColumn) {
         return;

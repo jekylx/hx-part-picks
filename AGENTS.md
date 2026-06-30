@@ -26,8 +26,8 @@ clasp push
 - Do not remove sheet protections casually; internal sheets are protected by default and `Part Pick Summary` is the only normal editable sheet.
 - Do not overwrite existing summary rows.
 - Do not treat `setup()` as a wipe/reset; it creates or updates project assets and must preserve existing data.
-- Do not use `Refresh EOD` as a reprocessing path for Gmail, PDFs, Gemini, archive, labels, dedupe keys, or raw `Part Picks`.
-- Do not use `Send Email` as a reprocessing path for Gmail, PDFs, Gemini, archive, labels, dedupe keys, or raw `Part Picks`.
+- Do not use `Refresh`/legacy `Refresh EOD` as a reprocessing path for Gmail, PDFs, Gemini, archive, labels, dedupe keys, or raw `Part Picks`.
+- Do not use `Email`/legacy `Send Email` as a reprocessing path for Gmail, PDFs, Gemini, archive, labels, dedupe keys, or raw `Part Picks`.
 - Do not clear email sent/blocked status casually; verify whether an email was sent before allowing retry.
 - Do not change Pallet/Product C/B/location correction policy without explicit approval.
 - Do not trust Outstanding Orders by Order No. alone.
@@ -38,7 +38,7 @@ clasp push
 - Run `node --check` on changed JS files.
 - Run `git diff --check`.
 - After an approved `clasp push`, run `runLocalTests()` in Apps Script.
-- After deploying `Refresh EOD` changes, run `installSummaryRefreshTrigger()` once if the installable edit trigger is not already present.
+- After deploying Summary `Refresh`/`Email` edit handler changes, run `installSummaryRefreshTrigger()` once if the installable edit trigger is not already present.
 - After deploying EOD cache warmup changes, run `installDailyEodCacheWarmupTrigger()` once if the optional 5am warmup trigger is not already present.
 - For documentation-only changes, `node --check *.js` can be run as a repo sanity check.
 
@@ -76,9 +76,10 @@ Summary append rules:
 - `repairAppendMissingSummaryRows()` only syncs existing raw `Part Picks` rows into Summary and does not call Gmail/PDF/Gemini/Drive archive/dedupe/email.
 - Manual and formula columns are not script-owned.
 - EOD enrichment applies after new rows are appended.
-- `Refresh EOD` is a manual checkbox on existing summary rows. It reruns EOD checks for that row only and must not append rows or call ingestion services.
-- `Send Email` is a manual checkbox on existing summary rows. It sends the current summary row details and original Drive PDF attachment to `jesse.lang.04@gmail.com`, then records durable status in `_Summary Email Ledger` and leaves the checkbox checked.
+- `Refresh` is a manual checkbox on existing summary rows. It reruns EOD checks for that row only and must not append rows or call ingestion services. `Refresh EOD` is a legacy header alias.
+- `Email` is a manual checkbox on existing summary rows. It sends the current summary row details and original Drive PDF attachment to `jesse.lang.04@gmail.com`, then records durable status in `_Summary Email Ledger` and leaves the checkbox checked. `Send Email` is a legacy header alias.
 - Email duplicate prevention uses `_Summary Email Ledger`, not checkbox state alone. Blocking statuses require admin review/reset before retry.
+- Summary email requires displayed values for Carrier, State, Customer Name, Member, Owner, Order No., Location, C Number, B Number, Product Code, Product Description, Vintage, Bottle Size, plus spreadsheet and PDF links.
 
 Processor reliability rules:
 
@@ -126,7 +127,14 @@ Pallet/Product B-owner gate:
 - C cannot correct a trusted B Number.
 - C-only evidence does not set Location.
 - Member is filled only from a unique B+Owner match.
-- Product notes are written only when the B Number has a unique product tuple.
+- Product columns and the B Number product note are written only when the B+Owner match has a unique product tuple.
+
+One-off migration rules:
+
+- `OneOffProductBackfill.js` is temporary historical-data migration code only.
+- Prefer `oneOffBackfillProductColumnsFromBNumberNotes()` first; use `oneOffBackfillProductColumnsViaRefresh()` only for rows still missing product fields.
+- The slow refresh migration can create a temporary continuation trigger and script-property state; clear it with `oneOffResetProductBackfillViaRefreshState()` if a migration is abandoned.
+- Remove `OneOffProductBackfill.js` after the product backfill is verified. Do not wire it into setup, normal triggers, ingestion, or menus.
 
 ## Preferred Workflow
 

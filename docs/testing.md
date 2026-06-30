@@ -23,8 +23,8 @@ The test harness:
 - Validates raw row append behavior.
 - Validates append-only summary behavior.
 - Validates `_Key`-based Summary row placement so test harness rows and production sync do not use `getLastRow()+1`.
-- Validates the `Refresh EOD` checkbox config, edit filtering, trigger duplicate helper, and one-row coordinator refresh routing.
-- Validates the `Send Email` checkbox config, edit filtering, ledger-backed duplicate-send guards, validation failures, subject/body composition, PDF attachment handling, and blocked send failures with stubbed mail/Drive services.
+- Validates the `Refresh` checkbox config, legacy `Refresh EOD` migration alias, edit filtering, trigger duplicate helper, and one-row coordinator refresh routing.
+- Validates the `Email` checkbox config, legacy `Send Email` migration alias, edit filtering, ledger-backed duplicate-send guards, required product fields, validation failures, subject/body composition, PDF attachment handling, and blocked send failures with stubbed mail/Drive services.
 - Validates B-number OCR normalization for leading `B` misread as `8` or `5`.
 - Validates the EOD report runtime cache, current-day sheet-backed cache behavior, today-only warmup, and the separate daily warmup trigger installer with stubs.
 - Validates batch/page processing key stability.
@@ -54,6 +54,25 @@ For changed JavaScript files:
 ```powershell
 node --check .\ChangedFile.js
 ```
+
+## One-Off Product Column Backfill
+
+`OneOffProductBackfill.js` is a temporary migration file only. After an
+approved push, run the shortcut migration first:
+`oneOffBackfillProductColumnsFromBNumberNotes()`.
+
+Verify the filled `Product Code`, `Product Description`, `Vintage`, and
+`Bottle Size` values in `Part Pick Summary`. Use the slow refresh migration
+only for rows that still have missing product fields:
+`oneOffBackfillProductColumnsViaRefresh()`.
+
+If the slow refresh cannot finish in one Apps Script execution, it schedules a
+temporary continuation trigger and resumes itself. Wait for the temporary
+trigger to finish. Check progress if needed with
+`oneOffGetProductBackfillViaRefreshStatus()`.
+
+After the backfill is verified, remove `OneOffProductBackfill.js`. Do not add
+these one-off functions to normal processing, setup, triggers, or menus.
 
 For a full repo syntax sweep in PowerShell:
 
@@ -99,8 +118,8 @@ Summary test helpers must use the same `_Key`-based append placement as producti
 - Confirm `_Processed Keys` has the page key and, after all pages, the batch key.
 - Confirm `Part Pick Summary` appended one row and did not overwrite existing manual rows.
 - Confirm EOD validation notes/colours are reasonable.
-- Correct a summary row in a controlled test, check `Refresh EOD`, and confirm only that row's EOD validation refreshes and the checkbox resets.
+- Correct a summary row in a controlled test, check `Refresh`, and confirm only that row's EOD validation refreshes and the checkbox resets.
 - Run `warmTodayEodReportCache()` only after `runLocalTests()` passes if you want to manually verify today's EOD cache warmup; confirm it logs only report keys, date key, cache status, and row counts. Confirm `_EOD Report Cache` contains metadata only, `_EOD Outstanding Orders Cache` contains only `Order Type == OL` rows, and `_EOD Pallet Product Cache` contains the full Pallet/Product report.
-- On a controlled reviewed summary row, check `Send Email` and confirm exactly one email is sent to `jesse.lang.04@gmail.com`, the PDF is attached, `_Summary Email Ledger` records `SENT`, the checkbox remains checked/locked as much as Apps Script allows, and checking again does not send a duplicate.
+- On a controlled reviewed summary row, check `Email` and confirm exactly one email is sent to `jesse.lang.04@gmail.com`, the PDF is attached, `_Summary Email Ledger` records `SENT`, the checkbox remains checked/locked as much as Apps Script allows, and checking again does not send a duplicate.
 - Confirm Gmail thread labeling, read state, and archive behavior.
 - Confirm `Processing Log` has no unexpected critical errors.

@@ -30,7 +30,7 @@
 
 `setup()` applies a sheet-level protection named `HX Part Picks protected internal sheet` to every sheet except `CONFIG.summary.sheetName` (`Part Pick Summary`). It also removes only that script-owned protection from the summary sheet if it is ever found there.
 
-The protected internal sheets are still writable by the spreadsheet owner or script-running user, so automation can append raw rows, log entries, and processed keys. Normal users should edit only `Part Pick Summary`, including manual corrections, `Refresh EOD`, and `Send Email`.
+The protected internal sheets are still writable by the spreadsheet owner or script-running user, so automation can append raw rows, log entries, and processed keys. Normal users should edit only `Part Pick Summary`, including manual corrections, `Refresh`, and `Email`.
 
 If internal sheet protection is removed or permissions drift, rerun `setup()` manually from Apps Script to reapply protections. Do not remove unrelated/manual protections unless their purpose is understood.
 
@@ -44,7 +44,7 @@ Each Gmail thread is processed independently. An unexpected failure in one threa
 
 ## Manual EOD Refresh
 
-If a parsed summary value is wrong, edit the value directly on the existing `Part Pick Summary` row, then check that row's `Refresh EOD` checkbox. The installable edit trigger reruns EOD enrichment and validation for that row only, using the current row values as the source of truth, and resets the checkbox after completion or failure.
+If a parsed summary value is wrong, edit the value directly on the existing `Part Pick Summary` row, then check that row's `Refresh` checkbox. The installable edit trigger reruns EOD enrichment and validation for that row only, using the current row values as the source of truth, and resets the checkbox after completion or failure. Setup migrates old `Refresh EOD` headers to `Refresh`.
 
 This does not append a summary row, touch raw `Part Picks` rows, process printer emails, process PDFs, call Gemini, archive files, change Gmail labels, or change processed keys.
 
@@ -60,17 +60,19 @@ The cache is row-based for scale. `_EOD Report Cache` stores metadata only. `_EO
 
 ## Send Summary Email
 
-After reviewing and correcting an existing `Part Pick Summary` row, check that row's `Send Email` checkbox. The same installable edit trigger used by `Refresh EOD` routes the edit to the summary email sender. It sends one plain-text email to `jesse.lang.04@gmail.com` with summary row details, the spreadsheet link, the Drive PDF link, validation/status note if available, and the original PDF attached.
+After reviewing and correcting an existing `Part Pick Summary` row, check that row's `Email` checkbox. The same installable edit trigger used by `Refresh` routes the edit to the summary email sender. It sends one plain-text email to `jesse.lang.04@gmail.com` with summary row details, the spreadsheet link, the Drive PDF link, and the original PDF attached. Setup migrates old `Send Email` headers to `Email`.
 
 The recipient comes from `CONFIG.summaryEmail.recipient`. The subject format is `HX Part Pick: <Member or (blank member)> - <Order No. or (blank order)>`. The PDF attachment is resolved from the Summary `PDF` column, including rich text links, `HYPERLINK` formulas, and raw Drive URLs.
 
-After a successful send, the script records `SENT` in `_Summary Email Ledger`, leaves `Send Email` checked, and best-effort protects the checked `Send Email` cell with the protection description `HX Part Picks sent email lock`.
+The email body includes displayed values for Carrier, State, Customer Name, Member, Owner, Order No., Location, C Number, B Number, Product Code, Product Description, Vintage, and Bottle Size. `Date Completed`, `SLA`, checkbox values, and validation/status notes are not included.
 
-The durable duplicate guard is `_Summary Email Ledger`, not the checkbox. If the ledger status is `SENT`, `SENDING`, `SEND_FAILED_BLOCKED`, `UNKNOWN`, or another nonblank blocking status, checking `Send Email` again will not send another email.
+After a successful send, the script records `SENT` in `_Summary Email Ledger`, leaves `Email` checked, and best-effort protects the checked `Email` cell with the protection description `HX Part Picks sent email lock`.
 
-If validation fails before sending, such as a missing or unreadable PDF link, the script writes `VALIDATION_FAILED` and the error detail to the ledger, resets `Send Email` to unchecked, and does not send.
+The durable duplicate guard is `_Summary Email Ledger`, not the checkbox. If the ledger status is `SENT`, `SENDING`, `SEND_FAILED_BLOCKED`, `UNKNOWN`, or another nonblank blocking status, checking `Email` again will not send another email.
 
-If the send attempt throws after the row is reserved, the script writes `SEND_FAILED_BLOCKED` and the error detail to the ledger, then unchecks `Send Email`. No duplicate email is more important than automatic retry. An admin must verify whether an email was sent before resetting ledger state and retrying.
+If validation fails before sending, such as a missing product field or unreadable PDF link, the script writes `VALIDATION_FAILED` and the error detail to the ledger, resets `Email` to unchecked, and does not send.
+
+If the send attempt throws after the row is reserved, the script writes `SEND_FAILED_BLOCKED` and the error detail to the ledger, then unchecks `Email`. No duplicate email is more important than automatic retry. An admin must verify whether an email was sent before resetting ledger state and retrying.
 
 This email path does not append a summary row, touch raw `Part Picks` rows, process printer emails, process PDFs, call Gemini, archive files, change Gmail labels, or change processed keys.
 
@@ -97,6 +99,16 @@ Archived PDFs are saved in Drive under `Part Pick Automation/Processed PDFs`. Na
 `repairAppendMissingSummaryRows()` is safe to run manually when Summary is missing rows for existing raw `Part Picks` data. It only calls `SummaryService.appendMissingSummaryRows()` and logs append stats. It does not search Gmail, process PDFs, call Gemini, archive files, write dedupe keys, label threads, or send email.
 
 If it reports `skippedExistingKey`, the raw `Processing Key` is already present as Summary `_Key`. If it reports `rawProcessingKeyHeaderFound=false`, the raw `Part Picks` header does not match the expected `Processing Key` header.
+
+## One-Off Product Backfill
+
+`OneOffProductBackfill.js` is temporary migration code for historical Summary rows that predate visible product columns. It is not normal processing.
+
+After approved deployment, run `oneOffBackfillProductColumnsFromBNumberNotes()` first. It reads existing product notes on `B Number` and fills blank `Product Code`, `Product Description`, `Vintage`, and `Bottle Size` cells without overwriting existing values unless called with `force: true`.
+
+For rows still missing product fields, run `oneOffBackfillProductColumnsViaRefresh()`. It processes a small batch of incomplete keyed Summary rows by calling the normal one-row EOD refresh path. If more rows remain, it stores temporary progress in script properties and creates one temporary continuation trigger for `oneOffProductBackfillViaRefreshTrigger_()`. The stored `nextRow` value is the next actual `Part Pick Summary` sheet row number, not a data-row offset.
+
+Use `oneOffGetProductBackfillViaRefreshStatus()` to inspect progress and `oneOffResetProductBackfillViaRefreshState()` to clear abandoned state/triggers. Remove `OneOffProductBackfill.js` after the backfill is verified.
 
 ## Reprocessing Safely
 
@@ -141,4 +153,4 @@ In Apps Script:
 7. Run `runLocalTests()` in Apps Script.
 8. If Summary trigger code changed, run `installSummaryRefreshTrigger()` and confirm it did not create duplicates.
 9. If EOD cache warmup trigger code changed or the trigger is not present, run `installDailyEodCacheWarmupTrigger()` and confirm it did not create duplicates.
-10. Smoke test with controlled input before relying on the trigger. For `Send Email`, use a reviewed test summary row and confirm exactly one email is sent to the configured recipient with the PDF attached.
+10. Smoke test with controlled input before relying on the trigger. For `Email`, use a reviewed test summary row and confirm exactly one email is sent to the configured recipient with the PDF attached.

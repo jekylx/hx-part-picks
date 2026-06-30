@@ -14,8 +14,8 @@ HX Part Picks is a Google Apps Script automation for ingesting warehouse Part Pi
 8. EOD report lookups enrich summary rows from:
    - `RP_Pallet_and_Product_by_Member.csv`
    - `RP_OUTSTANDING_ORDERS.csv`
-9. Validation colours and notes are written to the `*` summary column.
-10. Operators can check `Send Email` on reviewed summary rows to send the row details and original PDF attachment to the configured recipient. Email state is stored in the internal `_Summary Email Ledger`.
+9. Validation colours and notes are written to the `*` summary column, and unique B+Owner product evidence fills `Product Code`, `Product Description`, `Vintage`, and `Bottle Size`.
+10. Operators can check `Email` on reviewed summary rows to send the row details and original PDF attachment to the configured recipient. Email state is stored in the internal `_Summary Email Ledger`.
 11. Processed page and batch keys are written to `_Processed Keys`.
 12. PDFs are archived in Drive under `Part Pick Automation/Processed PDFs`.
 13. Successfully processed or duplicate-clean Gmail threads are labeled, marked read, and archived.
@@ -109,11 +109,13 @@ This repo has no `package.json` and no local test runner. Apps Script tests run 
 - Missing EOD reports: EOD reports are searched separately by sender, subject, attachment filename, and date. Missing reports produce validation notes and log entries.
 - EOD header mismatch: required headers are matched after trimming, lowercasing, BOM stripping, and whitespace collapse. Missing required columns throw an EOD lookup error.
 - Validation colours: green means OK or corrected, yellow means no match/blocked, red means mismatch.
-- Manual EOD refresh: correct values directly on a `Part Pick Summary` row, then check that row's `Refresh EOD` checkbox. The installable edit trigger reruns EOD checks for that row only and resets the checkbox.
+- Manual EOD refresh: correct values directly on a `Part Pick Summary` row, then check that row's `Refresh` checkbox. The installable edit trigger reruns EOD checks for that row only and resets the checkbox. Older deployed sheets with `Refresh EOD` are migrated/aliased by setup.
 - B-number OCR normalisation: Summary/EOD layers normalise valid B numbers to `B` plus seven digits. They handle leading `B` misread as `8` or `5`, including examples like `80867173` and `50867173` becoming `B0867173`. Raw `Part Picks` values remain unchanged.
-- Send summary email: review/correct an existing `Part Pick Summary` row, then check `Send Email`. The installable edit trigger sends one plain-text email with row details, spreadsheet link, PDF Drive link, validation/status note when available, and original PDF attached to `CONFIG.summaryEmail.recipient` (`jesse.lang.04@gmail.com`). The subject is `HX Part Pick: <Member or (blank member)> - <Order No. or (blank order)>`. On success it writes `SENT` to `_Summary Email Ledger`, leaves the checkbox checked, and best-effort locks the checkbox cell.
+- Product fields: `Product Code`, `Product Description`, `Vintage`, and `Bottle Size` are summary columns filled only from unique Pallet/Product B+Owner product evidence. Ambiguous or missing product evidence preserves existing values.
+- Send summary email: review/correct an existing `Part Pick Summary` row, then check `Email`. The installable edit trigger sends one plain-text email with displayed row details, spreadsheet link, PDF Drive link, and original PDF attached to `CONFIG.summaryEmail.recipient` (`jesse.lang.04@gmail.com`). The subject is `HX Part Pick: <Member or (blank member)> - <Order No. or (blank order)>`. On success it writes `SENT` to `_Summary Email Ledger`, leaves the checkbox checked, and best-effort locks the checkbox cell. Older deployed sheets with `Send Email` are migrated/aliased by setup.
 - Email duplicate prevention: `_Summary Email Ledger` is the durable source of truth. Rows marked `SENT`, `SENDING`, `SEND_FAILED_BLOCKED`, `UNKNOWN`, or another nonblank blocking status do not send automatically again, even if the checkbox is edited.
-- Email validation/send failures: validation failures reset `Send Email` and write `VALIDATION_FAILED` to the ledger. Send exceptions after reservation reset `Send Email` and write `SEND_FAILED_BLOCKED`. An admin must verify whether an email was sent before resetting ledger state and retrying.
+- Email validation/send failures: validation failures reset `Email` and write `VALIDATION_FAILED` to the ledger. Send exceptions after reservation reset `Email` and write `SEND_FAILED_BLOCKED`. An admin must verify whether an email was sent before resetting ledger state and retrying.
+- One-off product backfill: `OneOffProductBackfill.js` is temporary migration code for historical rows only. Run it only after approved deployment, verify the product columns, then remove the file.
 - EOD report cache: EOD CSV lookups keep a runtime cache for the current execution. Persistent cache sheets are current-day only; historical/random date requests may use Gmail fallback but must not populate the persistent cache. `_EOD Report Cache` stores metadata only, while `_EOD Outstanding Orders Cache` and `_EOD Pallet Product Cache` store report rows with batched row writes so large reports are not packed into one JSON cell. Pallet/Product by Member is cached in full. Outstanding Orders stores and searches only rows where `Order Type` normalizes to `OL`. `warmTodayEodReportCache()` preloads today's two reports around 5am, which is enough because EOD emails arrive around 2am, without Summary/raw/Gemini/printer Gmail/Drive/dedupe/email side effects. `installDailyEodCacheWarmupTrigger()` is separate from the Summary edit trigger.
 - Missing Gemini/API tokens: missing script properties may not throw during a run if no fresh PDF reaches Gemini or if Gemini failure is caught as non-fatal and converted into a review row.
 - Apps Script timeout: reduce `CONFIG.gmail.maxThreadsPerRun`, rerun later, and rely on batch/page dedupe for partial retries.
@@ -128,8 +130,8 @@ This repo has no `package.json` and no local test runner. Apps Script tests run 
 - Summary append is append-only by hidden `_Key` and must not overwrite existing rows or manual edits.
 - Missing summary rows append after the last real `_Key` in column A, not after `getLastRow()`, so checkbox/data-validation/formatted rows cannot push appends down to row 1001.
 - `repairAppendMissingSummaryRows()` only syncs existing raw `Part Picks` rows into `Part Pick Summary`; it does not call Gmail, PDF splitting, Gemini, Drive archive, dedupe, or email.
-- `Refresh EOD` only reruns EOD checks on an existing summary row. It must not reprocess Gmail, PDFs, Gemini extraction, Drive archive, labels, dedupe keys, or raw `Part Picks` rows.
-- `Send Email` only sends the existing summary row and attached archived PDF. It must not reprocess Gmail, PDFs, Gemini extraction, Drive archive, labels, dedupe keys, or raw `Part Picks` rows.
+- `Refresh` only reruns EOD checks on an existing summary row. It must not reprocess Gmail, PDFs, Gemini extraction, Drive archive, labels, dedupe keys, or raw `Part Picks` rows.
+- `Email` only sends the existing summary row and attached archived PDF. It must not reprocess Gmail, PDFs, Gemini extraction, Drive archive, labels, dedupe keys, or raw `Part Picks` rows.
 - Gmail thread labels are visibility only; processed-key dedupe controls reprocessing.
 - Do not remove the Inbox-only Gmail query behavior without understanding printer thread behavior.
 - Do not use order-only Outstanding Orders matching.

@@ -10,6 +10,10 @@
  * Summary sheet:
  * - CONFIG.summary.columns controls the clean human-facing sheet.
  * - manual: true means the script creates the column but does not fill it.
+ * - Product columns are manual at raw-summary copy time, then EOD fills them
+ *   only from unique Pallet/Product B+Owner product evidence.
+ * - Refresh/Email are the current operator checkbox labels; old Refresh EOD
+ *   and Send Email headers are migration aliases.
  * - existing summary rows must not be overwritten by the script.
  */
 
@@ -156,8 +160,9 @@ const CONFIG = {
       { header: 'Bottle Size', manual: true, type: 'text' },
       { header: 'Date Completed', manual: true, type: 'date' },
       { header: 'SLA', type: 'sla' },
-      { header: 'Refresh EOD', manual: true, type: 'checkbox' },
-      { header: 'Send Email', manual: true, type: 'checkbox' },
+      { header: 'Refresh', manual: true, type: 'checkbox' },
+      { header: 'Email', manual: true, type: 'checkbox' },
+      { header: 'Notes', manual: true, type: 'text' },
     ],
   },
 

@@ -10,9 +10,9 @@ The persistent cache is row-based because EOD reports can contain tens of thousa
 
 `installDailyEodCacheWarmupTrigger()` installs an optional recommended daily time trigger around 5am for `warmTodayEodReportCache()`. EOD report emails are expected around 2am, so one 5am warmup is sufficient for now. The warmup trigger is separate from the Summary edit trigger installed by `installSummaryRefreshTrigger()`.
 
-Existing summary rows can also be refreshed manually. Edit the row values first, then check the row's `Refresh EOD` checkbox. The installable onEdit trigger must point to `handleSummaryRefreshEdit(e)`. For `Refresh EOD`, it reruns EOD checks for that single row only and resets the checkbox after completion or failure.
+Existing summary rows can also be refreshed manually. Edit the row values first, then check the row's `Refresh` checkbox. The installable onEdit trigger must point to `handleSummaryRefreshEdit(e)`. For `Refresh`, it reruns EOD checks for that single row only and resets the checkbox after completion or failure. `Refresh EOD` is a legacy header alias that setup migrates to `Refresh`.
 
-Manual `Refresh EOD` does not append summary rows and does not call Gmail printer processing, PDF splitting, Gemini extraction, Drive archive, labels, dedupe, or raw `Part Picks` append logic.
+Manual `Refresh` does not append summary rows and does not call Gmail printer processing, PDF splitting, Gemini extraction, Drive archive, labels, dedupe, or raw `Part Picks` append logic.
 
 ## Report Discovery
 
@@ -65,7 +65,7 @@ Summary columns used:
 - C-only evidence does not set `Location`.
 - Mismatches are marked red and explained in validation notes.
 - Member is filled only from a unique B+Owner match.
-- Product details are written as a note on `B Number` only when the B Number has one unique product tuple.
+- Product details are written into `Product Code`, `Product Description`, `Vintage`, and `Bottle Size`, and mirrored as a note on `B Number`, only when the B+Owner matches one unique product tuple.
 
 ## RP_OUTSTANDING_ORDERS.csv
 
