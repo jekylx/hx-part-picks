@@ -564,6 +564,15 @@ const PalletAndProductByMembersEodReportService = {
     const products = [];
 
     matches.forEach(match => {
+      if (
+        !match.productCode &&
+        !match.productDescription &&
+        !match.vintage &&
+        !match.bottleSize
+      ) {
+        return;
+      }
+
       const key = [
         match.productCode || '',
         match.productDescription || '',

@@ -234,6 +234,12 @@ const SummaryEmailService = {
 
   buildEmail_(context) {
     const recipient = this.getRecipient_();
+    const missingFields = this.getMissingRequiredEmailFields_(context);
+
+    if (missingFields.length > 0) {
+      throw new Error(`Missing required email fields: ${missingFields.join(', ')}`);
+    }
+
     const pdf = this.resolvePdfAttachment_(context);
     const subject = this.buildSubject_(context);
     const body = this.buildBody_(context, pdf.url);
@@ -278,21 +284,7 @@ const SummaryEmailService = {
 
   buildBody_(context, pdfUrl) {
     const spreadsheetUrl = this.getSpreadsheetUrl_();
-    const detailHeaders = [
-      'Carrier',
-      'State',
-      'Customer Name',
-      'Member',
-      'Owner',
-      'Order No.',
-      'Location',
-      'C Number',
-      'B Number',
-      'Product Code',
-      'Product Description',
-      'Vintage',
-      'Bottle Size',
-    ];
+    const detailHeaders = this.getEmailDetailHeaders_();
     const lines = [
       'HX Part Pick',
       '',
@@ -312,6 +304,59 @@ const SummaryEmailService = {
     lines.push(`PDF: ${pdfUrl}`);
 
     return lines.join('\n');
+  },
+
+  getEmailDetailHeaders_() {
+    return [
+      'Carrier',
+      'State',
+      'Customer Name',
+      'Member',
+      'Owner',
+      'Order No.',
+      'Location',
+      'C Number',
+      'B Number',
+      'Product Code',
+      'Product Description',
+      'Vintage',
+      'Bottle Size'
+    ];
+  },
+
+  getMissingRequiredEmailFields_(context) {
+    const missing = [];
+
+    this.getEmailDetailHeaders_().forEach(header => {
+      if (context.columnIndex(header) <= 0) {
+        missing.push(header);
+        return;
+      }
+
+      if (!this.hasDisplayableValue_(context, header)) {
+        missing.push(header);
+      }
+    });
+
+    if (!String(this.getSpreadsheetUrl_() || '').trim()) {
+      missing.push('Spreadsheet link');
+    }
+
+    try {
+      if (!this.extractPdfUrl_(context.range('PDF'))) {
+        missing.push('PDF link');
+      }
+    } catch (err) {
+      missing.push('PDF link');
+    }
+
+    return missing;
+  },
+
+  hasDisplayableValue_(context, headerName) {
+    return !!String(
+      context.displayValue(headerName) || context.value(headerName) || ''
+    ).trim();
   },
 
   getValidationNote_(context) {
@@ -705,7 +750,7 @@ const SummaryEmailService = {
   },
 
   getSpreadsheetUrl_() {
-    if (this.spreadsheetUrlForTest_) {
+    if (this.spreadsheetUrlForTest_ !== null && this.spreadsheetUrlForTest_ !== undefined) {
       return this.spreadsheetUrlForTest_;
     }
 

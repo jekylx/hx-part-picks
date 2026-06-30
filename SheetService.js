@@ -97,6 +97,8 @@ const SheetService = {
       'Details',
       'Link'
     ]);
+
+    this.clearSheetDataValidations_(sheet);
   },
 
   setupProcessed_(ss) {
@@ -402,6 +404,7 @@ const SheetService = {
       sheet.appendRow(headers);
       sheet.setFrozenRows(1);
       this.applyColumnNumberFormats_(sheet, headers);
+      this.clearSheetDataValidations_(sheet);
       return;
     }
 
@@ -418,6 +421,7 @@ const SheetService = {
     if (!mismatch) {
       sheet.setFrozenRows(1);
       this.applyColumnNumberFormats_(sheet, headers);
+      this.clearSheetDataValidations_(sheet);
       return;
     }
 
@@ -433,6 +437,7 @@ const SheetService = {
 
     sheet.setFrozenRows(1);
     this.applyColumnNumberFormats_(sheet, headers);
+    this.clearSheetDataValidations_(sheet);
   },
 
   applyColumnNumberFormats_(sheet, headers) {
@@ -460,6 +465,23 @@ const SheetService = {
         .getRange(2, col, rowCount, 1)
         .setNumberFormat(numberFormat);
     });
+  },
+
+  clearSheetDataValidations_(sheet) {
+    const rowCount = sheet.getMaxRows() - 1;
+    const columnCount = sheet.getMaxColumns
+      ? sheet.getMaxColumns()
+      : sheet.getLastColumn();
+
+    if (rowCount <= 0 || columnCount <= 0) {
+      return;
+    }
+
+    const range = sheet.getRange(2, 1, rowCount, columnCount);
+
+    if (typeof range.clearDataValidations === 'function') {
+      range.clearDataValidations();
+    }
   },
 
   isTimestampHeader_(header) {
@@ -512,8 +534,7 @@ const LogService = {
   append_(level, status, messageId, filename, details, link) {
     try {
       const sheet = SheetService.getSheet_(CONFIG.sheets.logSheetName);
-
-      sheet.appendRow([
+      const row = [
         new Date(),
         level || '',
         status || '',
@@ -521,7 +542,15 @@ const LogService = {
         filename || '',
         details || '',
         link || ''
-      ]);
+      ];
+      const nextRow = sheet.getLastRow() + 1;
+      const range = sheet.getRange(nextRow, 1, 1, row.length);
+
+      if (typeof range.clearDataValidations === 'function') {
+        range.clearDataValidations();
+      }
+
+      range.setValues([row]);
     } catch (err) {
       Logger.log('LOG_WRITE_FAILED');
       Logger.log(err && err.stack ? err.stack : String(err));
