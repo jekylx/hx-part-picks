@@ -3934,6 +3934,9 @@ function buildMockMigratableRange_(sheet, state, row, col, rowCount, colCount) {
       setMatrix(state.rows, [[value]]);
       return this;
     },
+    setFontWeight() {
+      return this;
+    },
     getNote() {
       return getMatrix(state.notes)[0][0];
     },
