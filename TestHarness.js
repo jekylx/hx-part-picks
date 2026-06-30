@@ -286,10 +286,37 @@ function testSummaryEmailConfig_() {
   const headers = columns.map(column => column.header);
   const refreshColumn = columns.find(column => column.header === 'Refresh EOD');
   const sendColumn = columns[columns.length - 1];
+  const cNumberIndex = headers.indexOf('C Number');
+  const bNumberIndex = headers.indexOf('B Number');
 
   ['Email Sent At', 'Email Sent To', 'Email Status', 'Email Error'].forEach(header => {
     assertEquals_(-1, headers.indexOf(header), `${header} must not be visible in Summary.`);
   });
+  assertTruthy_(cNumberIndex >= 0, 'C Number must remain in Summary.');
+  assertTruthy_(bNumberIndex >= 0, 'B Number must remain in Summary.');
+  assertEquals_(cNumberIndex - 1, headers.indexOf('Location'), 'Location must remain immediately to the left of C Number.');
+  assertEquals_(cNumberIndex + 1, bNumberIndex, 'C Number must remain immediately to the left of B Number.');
+  [
+    'Location',
+    'C Number',
+    'B Number',
+    'Product Code',
+    'Product Description',
+    'Vintage',
+    'Bottle Size',
+    'Date Completed',
+    'SLA',
+    'Refresh EOD',
+    'Send Email'
+  ].forEach((header, offset) => {
+    assertEquals_(
+      header,
+      headers[cNumberIndex - 1 + offset],
+      `${header} must be in the expected Summary position around B Number.`
+    );
+  });
+  assertTruthy_(headers.indexOf('Date Completed') > -1, 'Date Completed must remain in Summary.');
+  assertTruthy_(headers.indexOf('SLA') > -1, 'SLA must remain in Summary.');
   assertEquals_(true, refreshColumn.manual, 'Refresh EOD must be manual.');
   assertEquals_('checkbox', refreshColumn.type, 'Refresh EOD must be a checkbox column.');
   assertEquals_('Send Email', sendColumn.header, 'Send Email must be the final summary column.');
@@ -1896,6 +1923,10 @@ function testPalletProductNoteRequiresUniqueProduct_() {
     'Product Code: P001',
     'Unique product tuple should set B Number note.'
   );
+  assertEquals_('P001', outcome.context.values['Product Code'], 'Unique product tuple should set Product Code.');
+  assertEquals_('Product One', outcome.context.values['Product Description'], 'Unique product tuple should set Product Description.');
+  assertEquals_('2020', outcome.context.values['Vintage'], 'Unique product tuple should set Vintage.');
+  assertEquals_('750ML', outcome.context.values['Bottle Size'], 'Unique product tuple should set Bottle Size.');
 
   outcome = runPalletProductRowTest_({
     values: {
@@ -2793,8 +2824,24 @@ function testSummarySendEmailBodyIncludesLinks_() {
   assertContains_(body, 'Spreadsheet: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit', 'Email body should include spreadsheet link.');
   assertContains_(body, 'PDF: https://drive.google.com/file/d/PDF_FILE_ID_1234567890/view', 'Email body should include PDF link.');
   assertContains_(body, 'Carrier: AP', 'Email body should include row details.');
-  assertContains_(body, 'Validation / Status Note:', 'Email body should include validation note heading.');
-  assertContains_(body, 'Validation note for test', 'Email body should include validation note.');
+  assertContains_(body, 'Product Code: P001', 'Email body should include Product Code.');
+  assertContains_(body, 'Product Description: Product One', 'Email body should include Product Description.');
+  assertContains_(body, 'Vintage: 2020', 'Email body should include Vintage.');
+  assertContains_(body, 'Bottle Size: 750ML', 'Email body should include Bottle Size.');
+  assertNotContains_(body, 'Date Completed:', 'Email body should not include Date Completed.');
+  assertNotContains_(body, 'SLA:', 'Email body should not include SLA.');
+  assertNotContains_(body, 'Validation / Status Note:', 'Email body should not include validation note heading.');
+  assertNotContains_(body, 'Validation note for test', 'Email body should not include validation note.');
+  assertContains_(
+    body,
+    '\nSpreadsheet: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit\nPDF: https://drive.google.com/file/d/PDF_FILE_ID_1234567890/view',
+    'Email body should end with inline spreadsheet and PDF links.'
+  );
+  assertEquals_(
+    'PDF: https://drive.google.com/file/d/PDF_FILE_ID_1234567890/view',
+    body.split('\n').pop(),
+    'PDF link should be the final email body line.'
+  );
 }
 
 function testSummarySendEmailAttachesPdfBlob_() {
@@ -3654,6 +3701,10 @@ function buildMockSummaryEmailSheet_(options) {
       'Location': '1G20E2',
       'C Number': 'C123456',
       'B Number': 'B1234567',
+      'Product Code': 'P001',
+      'Product Description': 'Product One',
+      'Vintage': '2020',
+      'Bottle Size': '750ML',
       'Date Completed': '2026-06-01',
       'SLA': '0.5',
       'Refresh EOD': false,

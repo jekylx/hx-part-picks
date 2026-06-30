@@ -98,7 +98,7 @@ const FIELD_DESCRIPTIONS = {
 };
 
 const CONFIG = {
-  appName: 'Part Pick Form Extractor',
+  appName: 'HX Part Picks',
 
   gmail: {
     // from: 'guestprint@edg.com.au',
@@ -150,6 +150,10 @@ const CONFIG = {
       { header: 'Location', source: 'Location', type: 'text' },
       { header: 'C Number', source: 'C Number', type: 'text' },
       { header: 'B Number', source: 'B Number', type: 'text' },
+      { header: 'Product Code', manual: true, type: 'text' },
+      { header: 'Product Description', manual: true, type: 'text' },
+      { header: 'Vintage', manual: true, type: 'text' },
+      { header: 'Bottle Size', manual: true, type: 'text' },
       { header: 'Date Completed', manual: true, type: 'date' },
       { header: 'SLA', type: 'sla' },
       { header: 'Refresh EOD', manual: true, type: 'checkbox' },
@@ -205,7 +209,11 @@ const CONFIG = {
           member: 'Member',
           location: 'Location',
           cNumber: 'C Number',
-          bNumber: 'B Number'
+          bNumber: 'B Number',
+          productCode: 'Product Code',
+          productDescription: 'Product Description',
+          vintage: 'Vintage',
+          bottleSize: 'Bottle Size'
         }
       },
 

@@ -306,6 +306,7 @@ const PalletAndProductByMembersEodReportService = {
         rowIndex,
         EodReportNormalisationService.buildProductNote(product)
       );
+      this.setProductValues_(context, rowIndex, summaryColumns, product);
     }
 
     const memberMatch = this.getUniqueMemberForBNumberAndOwner_(memberMatches);
@@ -323,6 +324,13 @@ const PalletAndProductByMembersEodReportService = {
     }
 
     context.setValue(summaryColumns.member, rowIndex, memberMatch.memberNo);
+  },
+
+  setProductValues_(context, rowIndex, summaryColumns, product) {
+    context.setValue(summaryColumns.productCode, rowIndex, product.productCode || '');
+    context.setValue(summaryColumns.productDescription, rowIndex, product.productDescription || '');
+    context.setValue(summaryColumns.vintage, rowIndex, product.vintage || '');
+    context.setValue(summaryColumns.bottleSize, rowIndex, product.bottleSize || '');
   },
 
   getLookupForDate_(dateKey) {

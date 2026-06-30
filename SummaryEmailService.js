@@ -288,14 +288,13 @@ const SummaryEmailService = {
       'Location',
       'C Number',
       'B Number',
-      'Date Completed',
-      'SLA',
+      'Product Code',
+      'Product Description',
+      'Vintage',
+      'Bottle Size',
     ];
     const lines = [
       'HX Part Pick',
-      '',
-      `Spreadsheet: ${spreadsheetUrl}`,
-      `PDF: ${pdfUrl}`,
       '',
       'Row Details:'
     ];
@@ -308,13 +307,9 @@ const SummaryEmailService = {
       lines.push(`${header}: ${context.displayValue(header) || ''}`);
     });
 
-    const validationNote = this.getValidationNote_(context);
-
-    if (validationNote) {
-      lines.push('');
-      lines.push('Validation / Status Note:');
-      lines.push(validationNote);
-    }
+    lines.push('');
+    lines.push(`Spreadsheet: ${spreadsheetUrl}`);
+    lines.push(`PDF: ${pdfUrl}`);
 
     return lines.join('\n');
   },
