@@ -1,0 +1,59 @@
+Date : 2026-07-01 01:54:39
+Directory : c:\Users\jesse\CodeProjects\hx-part-picks
+Total : 31 files,  12032 codes, 158 comments, 2306 blanks, all 14496 lines
+
+Languages
++------------+------------+------------+------------+------------+------------+
+| language   | files      | code       | comment    | blank      | total      |
++------------+------------+------------+------------+------------+------------+
+| JavaScript |         22 |     11,353 |        158 |      2,058 |     13,569 |
+| Markdown   |          7 |        660 |          0 |        247 |        907 |
+| JSON       |          2 |         19 |          0 |          1 |         20 |
++------------+------------+------------+------------+------------+------------+
+
+Directories
++---------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                                  | files      | code       | comment    | blank      | total      |
++---------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                                     |         31 |     12,032 |        158 |      2,306 |     14,496 |
+| . (Files)                                                                             |         26 |     11,598 |        158 |      2,118 |     13,874 |
+| docs                                                                                  |          5 |        434 |          0 |        188 |        622 |
++---------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++---------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| filename                                                                              | language   | code       | comment    | blank      | total      |
++---------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| c:\Users\jesse\CodeProjects\hx-part-picks\.clasp.json                                 | JSON       |          4 |          0 |          0 |          4 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\AGENTS.md                                   | Markdown   |        113 |          0 |         34 |        147 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\Code.js                                     | JavaScript |        439 |         42 |        104 |        585 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\Config.js                                   | JavaScript |        424 |         19 |         34 |        477 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\DedupeService.js                            | JavaScript |         49 |         11 |         15 |         75 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\DriveService.js                             | JavaScript |         62 |          0 |         20 |         82 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\EodReportCoordinator.js                     | JavaScript |        108 |          3 |         22 |        133 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\EodReportCsvService.js                      | JavaScript |        386 |          0 |         89 |        475 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\EodReportNormalisationService.js            | JavaScript |        178 |          0 |         39 |        217 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\EodReportSummaryContextService.js           | JavaScript |        116 |          0 |         26 |        142 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\EodReportValidationService.js               | JavaScript |         59 |          3 |         17 |         79 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\GeminiService.js                            | JavaScript |         69 |          0 |         15 |         84 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\GmailService.js                             | JavaScript |         38 |          4 |          7 |         49 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\NormalisationService.js                     | JavaScript |        119 |          0 |         32 |        151 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\OneOffProductBackfill.js                    | JavaScript |        488 |         10 |        118 |        616 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\OutstandingOrdersEodReportService.js        | JavaScript |        374 |          2 |         78 |        454 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\PalletAndProductByMemberEodReportService.js | JavaScript |        743 |          2 |        152 |        897 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\PdfService.js                               | JavaScript |         59 |          0 |         13 |         72 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\PromptService.js                            | JavaScript |         92 |          0 |          6 |         98 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\README.md                                   | Markdown   |        113 |          0 |         25 |        138 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\SheetService.js                             | JavaScript |        509 |          5 |         95 |        609 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\SummaryEmailService.js                      | JavaScript |        702 |          4 |        172 |        878 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\SummaryService.js                           | JavaScript |        580 |          9 |        152 |        741 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\TestHarness.js                              | JavaScript |      5,727 |         44 |        850 |      6,621 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\Utils.js                                    | JavaScript |         32 |          0 |          2 |         34 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\appsscript.json                             | JSON       |         15 |          0 |          1 |         16 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\docs\architecture.md                        | Markdown   |        102 |          0 |         44 |        146 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\docs\eod-reports.md                         | Markdown   |         91 |          0 |         37 |        128 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\docs\extraction.md                          | Markdown   |         46 |          0 |         19 |         65 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\docs\operations.md                          | Markdown   |        102 |          0 |         55 |        157 |
+| c:\Users\jesse\CodeProjects\hx-part-picks\docs\testing.md                             | Markdown   |         93 |          0 |         33 |        126 |
+| Total                                                                                 |            |     12,032 |        158 |      2,306 |     14,496 |
++---------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
