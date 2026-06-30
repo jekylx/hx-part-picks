@@ -314,6 +314,7 @@ const SummaryService = {
     const dateCols = this.getConfiguredColumnIndexes_(headers, column =>
       column.type === 'date'
     );
+    const formattedCols = {};
     const slaCol = this.getSlaColumn_(headers);
     const startRow = this.summaryDataStartRow_();
     const rowCount = sheet.getMaxRows() - startRow + 1;
@@ -323,15 +324,35 @@ const SummaryService = {
     }
 
     datetimeCols.forEach(col => {
+      formattedCols[col] = true;
       sheet
         .getRange(startRow, col, rowCount, 1)
-        .setNumberFormat('dd/mm/yyyy hh:mm');
+        .setNumberFormat(SheetService.dateTimeNumberFormat);
     });
 
     dateCols.forEach(col => {
+      formattedCols[col] = true;
       sheet
         .getRange(startRow, col, rowCount, 1)
-        .setNumberFormat('dd/mm/yyyy');
+        .setNumberFormat(SheetService.dateNumberFormat);
+    });
+
+    headers.forEach((header, index) => {
+      const col = index + 1;
+
+      if (formattedCols[col]) {
+        return;
+      }
+
+      if (SheetService.isTimestampHeader_(header)) {
+        sheet
+          .getRange(startRow, col, rowCount, 1)
+          .setNumberFormat(SheetService.dateTimeNumberFormat);
+      } else if (SheetService.isDateOnlyHeader_(header)) {
+        sheet
+          .getRange(startRow, col, rowCount, 1)
+          .setNumberFormat(SheetService.dateNumberFormat);
+      }
     });
 
     if (slaCol > 0) {

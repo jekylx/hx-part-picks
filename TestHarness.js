@@ -130,6 +130,9 @@ function getLocalTestCases_(suite) {
     { name: 'Prompt contains raw extraction rules', fn: testPromptRules_, suite: 'core' },
     { name: 'Sheet setup creates expected sheets', fn: testSheetSetup_, suite: 'sheet_setup' },
     { name: 'Sheet setup protects implementation sheets', fn: testSheetSetupProtectsImplementationSheets_, suite: 'sheet_setup' },
+    { name: 'Sheet setup formats Processed At as timestamp', fn: testSheetSetupFormatsProcessedAtTimestamp_, suite: 'sheet_setup' },
+    { name: 'Sheet setup formats Email Received At as timestamp', fn: testSheetSetupFormatsEmailReceivedAtTimestamp_, suite: 'sheet_setup' },
+    { name: 'Sheet setup keeps raw form dates date-only', fn: testSheetSetupKeepsFormDatesDateOnly_, suite: 'sheet_setup' },
     { name: 'Sheet protection helper is idempotent', fn: testSheetProtectionHelperIdempotent_, suite: 'sheet_setup' },
     { name: 'New internal sheets are hidden and protected', fn: testNewInternalSheetsAreHiddenAndProtected_, suite: 'sheet_setup' },
     { name: 'New internal sheet protections retain effective user', fn: testInternalSheetProtectionRetainsOnlyEffectiveUser_, suite: 'sheet_setup' },
@@ -161,6 +164,7 @@ function getLocalTestCases_(suite) {
     { name: 'Processor appends summary rows after thread failure', fn: testProcessorAppendsSummaryAfterThreadFailure_, suite: 'summary' },
     { name: 'Summary append ignores inflated last row', fn: testSummaryAppendIgnoresInflatedLastRow_, suite: 'summary' },
     { name: 'Summary appends missing rows only', fn: testSummaryAppendOnly_, suite: 'summary' },
+    { name: 'Summary append preserves timestamp values and display format', fn: testSummaryAppendPreservesTimestampValueAndFormat_, suite: 'summary' },
     { name: 'Batch and page processing keys are stable and unique', fn: testPageProcessingKey_, suite: 'core' },
     { name: 'Legacy page key does not skip whole batch', fn: testLegacyPageKeyDoesNotSkipBatch_, suite: 'core' },
     { name: 'PDF processor health endpoint works', fn: testPdfProcessorHealth_, suite: 'core' }
@@ -2050,6 +2054,69 @@ function testSheetSetupProtectsImplementationSheets_() {
   );
 }
 
+function testSheetSetupFormatsProcessedAtTimestamp_() {
+  ensureLocalTestSetup_();
+
+  const sheet = SheetService.getSheet_(CONFIG.sheets.extractedSheetName);
+  const headers = sheet
+    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
+
+  assertCellNumberFormat_(
+    sheet,
+    2,
+    headers,
+    'Processed At',
+    SheetService.dateTimeNumberFormat,
+    'Processed At should display full date and time.'
+  );
+}
+
+function testSheetSetupFormatsEmailReceivedAtTimestamp_() {
+  ensureLocalTestSetup_();
+
+  const sheet = SheetService.getSheet_(CONFIG.sheets.extractedSheetName);
+  const headers = sheet
+    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
+
+  assertCellNumberFormat_(
+    sheet,
+    2,
+    headers,
+    'Email Received At',
+    SheetService.dateTimeNumberFormat,
+    'Email Received At should display full date and time.'
+  );
+}
+
+function testSheetSetupKeepsFormDatesDateOnly_() {
+  ensureLocalTestSetup_();
+
+  const sheet = SheetService.getSheet_(CONFIG.sheets.extractedSheetName);
+  const headers = sheet
+    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
+
+  assertCellNumberFormat_(
+    sheet,
+    2,
+    headers,
+    'Date',
+    SheetService.dateNumberFormat,
+    'Date should remain date-only.'
+  );
+
+  assertCellNumberFormat_(
+    sheet,
+    2,
+    headers,
+    'Signoff Date',
+    SheetService.dateNumberFormat,
+    'Signoff Date should remain date-only.'
+  );
+}
+
 function testSheetProtectionHelperIdempotent_() {
   const effectiveUser = buildMockUser_('owner@example.com');
   const sheet = buildMockProtectableSheet_('Part Picks', []);
@@ -3108,6 +3175,85 @@ function testSummaryAppendOnly_() {
     'MANUAL CARRIER SHOULD STAY',
     summarySheet.getRange(secondFind.rowNumber, carrierCol).getValue(),
     'Summary append-only failed: manual carrier edit was overwritten.'
+  );
+}
+
+function testSummaryAppendPreservesTimestampValueAndFormat_() {
+  ensureLocalTestSetup_();
+
+  const processingKey = TEST_PREFIX + 'SUMMARY_TIMESTAMP_FORMAT';
+  const ctx = buildMockAppendContext_(processingKey);
+  const expectedReceivedAt = ctx.message.getDate();
+
+  SheetService.appendPartPickRow(ctx);
+
+  const rawSheet = SheetService.getSheet_(CONFIG.sheets.extractedSheetName);
+  const rawFind = findRowByFirstColumnValue_(rawSheet, processingKey);
+  const rawHeaders = rawSheet
+    .getRange(1, 1, 1, rawSheet.getLastColumn())
+    .getValues()[0];
+  const rawProcessedAtCol = getColumnIndex_(rawHeaders, 'Processed At');
+  const rawReceivedAtCol = getColumnIndex_(rawHeaders, 'Email Received At');
+
+  assertTruthy_(rawFind.rowNumber > 0, 'Raw timestamp test row was not appended.');
+  assertTruthy_(rawProcessedAtCol > 0, 'Raw Processed At column missing.');
+  assertTruthy_(rawReceivedAtCol > 0, 'Raw Email Received At column missing.');
+
+  SheetService.setupSheets();
+
+  const rawProcessedAtValue = rawSheet
+    .getRange(rawFind.rowNumber, rawProcessedAtCol)
+    .getValue();
+  const rawReceivedAtValue = rawSheet
+    .getRange(rawFind.rowNumber, rawReceivedAtCol)
+    .getValue();
+
+  assertTruthy_(
+    rawProcessedAtValue instanceof Date,
+    'Processed At should remain a Date object after setup formatting.'
+  );
+  assertTruthy_(
+    rawReceivedAtValue instanceof Date,
+    'Email Received At should remain a Date object after setup formatting.'
+  );
+  assertEquals_(
+    expectedReceivedAt.getTime(),
+    rawReceivedAtValue.getTime(),
+    'Email Received At timestamp value should not be rewritten.'
+  );
+
+  withEodAppendStub_(() => SummaryService.appendMissingSummaryRows());
+
+  const summarySheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const summaryFind = findRowByFirstColumnValue_(summarySheet, processingKey);
+  const summaryHeaders = summarySheet
+    .getRange(CONFIG.summary.headerRow, 1, 1, summarySheet.getLastColumn())
+    .getValues()[0];
+  const scannedAtCol = getColumnIndex_(summaryHeaders, 'Scanned At');
+
+  assertTruthy_(summaryFind.rowNumber > 0, 'Summary timestamp test row was not appended.');
+  assertTruthy_(scannedAtCol > 0, 'Summary Scanned At column missing.');
+
+  const summaryScannedAtValue = summarySheet
+    .getRange(summaryFind.rowNumber, scannedAtCol)
+    .getValue();
+
+  assertTruthy_(
+    summaryScannedAtValue instanceof Date,
+    'Summary Scanned At should remain a Date object.'
+  );
+  assertEquals_(
+    expectedReceivedAt.getTime(),
+    summaryScannedAtValue.getTime(),
+    'Summary append should preserve the Email Received At timestamp value.'
+  );
+  assertCellNumberFormat_(
+    summarySheet,
+    summaryFind.rowNumber,
+    summaryHeaders,
+    'Scanned At',
+    SheetService.dateTimeNumberFormat,
+    'Summary Scanned At should display full date and time.'
   );
 }
 
@@ -4320,6 +4466,20 @@ function assertCellDisplayValue_(sheet, rowNumber, headers, headerName, expected
   assertTruthy_(col > 0, `Column not found: ${headerName}`);
 
   const actual = sheet.getRange(rowNumber, col).getDisplayValue();
+
+  assertEquals_(
+    String(expected),
+    String(actual),
+    message
+  );
+}
+
+function assertCellNumberFormat_(sheet, rowNumber, headers, headerName, expected, message) {
+  const col = getColumnIndex_(headers, headerName);
+
+  assertTruthy_(col > 0, `Column not found: ${headerName}`);
+
+  const actual = sheet.getRange(rowNumber, col).getNumberFormat();
 
   assertEquals_(
     String(expected),

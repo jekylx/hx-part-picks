@@ -1,5 +1,7 @@
 const SheetService = {
   internalProtectionDescription: 'HX Part Picks protected internal sheet',
+  dateTimeNumberFormat: 'dd/MM/yyyy HH:mm:ss',
+  dateNumberFormat: 'dd/MM/yyyy',
 
   setupSheets() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -399,6 +401,7 @@ const SheetService = {
     if (sheet.getLastRow() === 0) {
       sheet.appendRow(headers);
       sheet.setFrozenRows(1);
+      this.applyColumnNumberFormats_(sheet, headers);
       return;
     }
 
@@ -414,6 +417,7 @@ const SheetService = {
 
     if (!mismatch) {
       sheet.setFrozenRows(1);
+      this.applyColumnNumberFormats_(sheet, headers);
       return;
     }
 
@@ -428,6 +432,64 @@ const SheetService = {
     }
 
     sheet.setFrozenRows(1);
+    this.applyColumnNumberFormats_(sheet, headers);
+  },
+
+  applyColumnNumberFormats_(sheet, headers) {
+    const rowCount = sheet.getMaxRows() - 1;
+
+    if (rowCount <= 0) {
+      return;
+    }
+
+    headers.forEach((header, index) => {
+      const col = index + 1;
+      let numberFormat = '';
+
+      if (this.isTimestampHeader_(header)) {
+        numberFormat = this.dateTimeNumberFormat;
+      } else if (this.isDateOnlyHeader_(header)) {
+        numberFormat = this.dateNumberFormat;
+      }
+
+      if (!numberFormat) {
+        return;
+      }
+
+      sheet
+        .getRange(2, col, rowCount, 1)
+        .setNumberFormat(numberFormat);
+    });
+  },
+
+  isTimestampHeader_(header) {
+    const timestampHeaders = {
+      'Processed At': true,
+      'Email Received At': true,
+      'Email Sent At': true,
+      'Created At': true,
+      'Updated At': true,
+      'Cached At': true,
+      'Fetched At': true,
+      'Sent At': true,
+      'Reserved At': true,
+      'Error At': true,
+      'Refreshed At': true,
+      'Timestamp': true
+    };
+
+    return !!timestampHeaders[String(header || '').trim()];
+  },
+
+  isDateOnlyHeader_(header) {
+    const dateOnlyHeaders = {
+      'Date': true,
+      'Signoff Date': true,
+      'form_date': true,
+      'picker_signoff_date': true
+    };
+
+    return !!dateOnlyHeaders[String(header || '').trim()];
   }
 };
 
