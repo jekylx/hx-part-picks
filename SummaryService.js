@@ -135,18 +135,104 @@ const SummaryService = {
   },
 
   setupSummaryHeaders_(sheet) {
-    const headers = this.getConfiguredSummaryHeaders_();
     const headerRow = this.summaryHeaderRow_();
 
     sheet.showSheet();
 
-    sheet
-      .getRange(headerRow, 1, 1, headers.length)
-      .setValues([headers]);
+    this.migrateSummarySchema_(sheet);
 
     sheet.setFrozenRows(headerRow);
     sheet.hideColumns(1);
     this.hideOperationalEmailColumns_(sheet);
+  },
+
+  migrateSummarySchema_(sheet) {
+    const configuredHeaders = this.getConfiguredSummaryHeaders_();
+    const headerRow = this.summaryHeaderRow_();
+    const lastColumn = sheet.getLastColumn();
+
+    if (lastColumn < 1 || this.isSummaryHeaderRowBlank_(sheet)) {
+      sheet
+        .getRange(headerRow, 1, 1, configuredHeaders.length)
+        .setValues([configuredHeaders]);
+      return;
+    }
+
+    let headers = this.getSheetHeaders_(sheet);
+
+    if (headers[0] !== '_Key' && headers.indexOf('_Key') === -1) {
+      if (typeof sheet.insertColumnBefore === 'function') {
+        sheet.insertColumnBefore(1);
+      }
+
+      sheet.getRange(headerRow, 1).setValue('_Key');
+    }
+
+    headers = this.getSheetHeaders_(sheet);
+
+    const bNumberCol = headers.indexOf('B Number') + 1;
+
+    if (bNumberCol <= 0) {
+      throw new Error('Cannot safely migrate Summary schema because B Number header is missing.');
+    }
+
+    const protectedSequence = [
+      'Product Code',
+      'Product Description',
+      'Vintage',
+      'Bottle Size',
+      'Date Completed',
+      'SLA',
+      'Refresh EOD',
+      'Send Email'
+    ];
+
+    protectedSequence.forEach((header, index) => {
+      this.placeSummaryColumn_(sheet, header, bNumberCol + index + 1);
+    });
+  },
+
+  isSummaryHeaderRowBlank_(sheet) {
+    const headerRow = this.summaryHeaderRow_();
+
+    if (sheet.getLastColumn() < 1) {
+      return true;
+    }
+
+    return sheet
+      .getRange(headerRow, 1, 1, sheet.getLastColumn())
+      .getValues()[0]
+      .every(value => String(value || '').trim() === '');
+  },
+
+  placeSummaryColumn_(sheet, header, targetCol) {
+    const headerRow = this.summaryHeaderRow_();
+    let headers = this.getSheetHeaders_(sheet).map(value => String(value || '').trim());
+    let currentCol = headers.indexOf(header) + 1;
+
+    if (currentCol === targetCol) {
+      sheet.getRange(headerRow, targetCol).setValue(header);
+      return;
+    }
+
+    if (currentCol > 0) {
+      if (typeof sheet.moveColumns === 'function') {
+        sheet.moveColumns(
+          sheet.getRange(1, currentCol, sheet.getMaxRows(), 1),
+          targetCol
+        );
+        sheet.getRange(headerRow, targetCol).setValue(header);
+      }
+      return;
+    }
+
+    if (targetCol <= sheet.getLastColumn()) {
+      sheet.insertColumnBefore(targetCol);
+    } else if (sheet.getLastColumn() > 0) {
+      sheet.insertColumnAfter(sheet.getLastColumn());
+    }
+
+    sheet.getRange(headerRow, targetCol).setValue(header);
   },
 
   getConfiguredSummaryHeaders_() {

@@ -139,6 +139,8 @@ function getLocalTestCases_(suite) {
     { name: 'Summary sheet removes only HX internal protection', fn: testSummaryProtectionCleanup_, suite: 'sheet_setup' },
     { name: 'Summary setup applies Refresh EOD checkbox validation', fn: testSummaryCheckboxValidation_, suite: 'sheet_setup' },
     { name: 'Summary setup applies Send Email checkbox validation', fn: testSummarySendEmailCheckboxValidation_, suite: 'sheet_setup' },
+    { name: 'Summary setup migrates product columns without overwriting existing columns', fn: testSummarySetupMigratesProductColumns_, suite: 'sheet_setup' },
+    { name: 'Summary setup migration is idempotent', fn: testSummarySetupMigrationIdempotent_, suite: 'sheet_setup' },
     { name: 'Summary refresh edit handler filters edits strictly', fn: testSummaryRefreshEditFilter_, suite: 'summary' },
     { name: 'Summary refresh edit handler refreshes checked rows', fn: testSummaryRefreshEditHandlerCallsRefresh_, suite: 'summary' },
     { name: 'Summary refresh edit handler resets checkbox after failure', fn: testSummaryRefreshEditHandlerResetsAfterFailure_, suite: 'summary' },
@@ -160,8 +162,8 @@ function getLocalTestCases_(suite) {
     { name: 'Coordinator refresh does not append summary rows', fn: testCoordinatorRefreshDoesNotAppend_, suite: 'summary' },
     { name: 'Coordinator refresh uses current summary row values', fn: testCoordinatorRefreshUsesCurrentRowValues_, suite: 'summary' },
     { name: 'Raw row append keeps raw values', fn: testAppendMockRawRow_, suite: 'summary' },
-    { name: 'Repair helper appends existing raw rows', fn: testRepairAppendMissingSummaryRows_, suite: 'summary' },
-    { name: 'Repair helper ignores inflated summary last row', fn: testRepairAppendIgnoresInflatedSummaryLastRow_, suite: 'summary' },
+    { name: 'Summary sync appends existing raw rows', fn: testRepairAppendMissingSummaryRows_, suite: 'summary' },
+    { name: 'Summary sync ignores inflated summary last row', fn: testRepairAppendIgnoresInflatedSummaryLastRow_, suite: 'summary' },
     { name: 'Processor appends summary rows after thread failure', fn: testProcessorAppendsSummaryAfterThreadFailure_, suite: 'summary' },
     { name: 'Summary append ignores inflated last row', fn: testSummaryAppendIgnoresInflatedLastRow_, suite: 'summary' },
     { name: 'Summary appends missing rows only', fn: testSummaryAppendOnly_, suite: 'summary' },
@@ -2341,6 +2343,169 @@ function testSummarySendEmailCheckboxValidation_() {
   );
 }
 
+function testSummarySetupMigratesProductColumns_() {
+  const oldHeaders = [
+    '_Key',
+    '*',
+    'PDF',
+    'Scanned At',
+    'Carrier',
+    'State',
+    'Customer Name',
+    'Member',
+    'Owner',
+    'Order No.',
+    'Location',
+    'C Number',
+    'B Number',
+    'Date Completed',
+    'SLA',
+    'Refresh EOD',
+    'Send Email',
+    'Notes'
+  ];
+  const sheet = buildMockMigratableSummarySheet_(oldHeaders, [[
+    TEST_PREFIX + 'SCHEMA',
+    '',
+    'Open PDF',
+    new Date('2026-06-01T09:00:00+10:00'),
+    'AP',
+    'VIC',
+    'Customer',
+    'MEM1',
+    'OWNER1',
+    '1234567',
+    'A0101',
+    'C123',
+    'B123',
+    '2026-06-02',
+    1.5,
+    true,
+    false,
+    'manual note column'
+  ]]);
+
+  sheet
+    .getRange(CONFIG.summary.headerRow + 1, oldHeaders.indexOf('B Number') + 1)
+    .setNote('Keep B note');
+
+  SummaryService.setupSummaryHeaders_(sheet);
+  SummaryService.formatSummary_(sheet);
+
+  const headers = sheet.getHeaderValues();
+  const expectedArea = [
+    'Location',
+    'C Number',
+    'B Number',
+    'Product Code',
+    'Product Description',
+    'Vintage',
+    'Bottle Size',
+    'Date Completed',
+    'SLA',
+    'Refresh EOD',
+    'Send Email',
+    'Notes'
+  ];
+  const locationIndex = headers.indexOf('Location');
+
+  expectedArea.forEach((header, offset) => {
+    assertEquals_(
+      header,
+      headers[locationIndex + offset],
+      `${header} should be in the migrated Summary order.`
+    );
+  });
+
+  assertEquals_('B123', sheet.getDataValueByHeader('B Number'), 'B Number data must stay put.');
+  assertEquals_('', sheet.getDataValueByHeader('Product Code'), 'Inserted Product Code should be blank.');
+  assertEquals_('2026-06-02', sheet.getDataValueByHeader('Date Completed'), 'Date Completed data should shift right.');
+  assertEquals_(1.5, sheet.getDataValueByHeader('SLA'), 'SLA data should shift right.');
+  assertEquals_(true, sheet.getDataValueByHeader('Refresh EOD'), 'Refresh EOD data should shift right.');
+  assertEquals_(false, sheet.getDataValueByHeader('Send Email'), 'Send Email data should shift right.');
+  assertEquals_('manual note column', sheet.getDataValueByHeader('Notes'), 'Later user columns must be preserved.');
+  assertEquals_('Keep B note', sheet.getNoteByHeader('B Number'), 'B Number notes must stay intact.');
+  assertEquals_(
+    SheetService.dateNumberFormat,
+    sheet.getNumberFormatByHeader('Date Completed'),
+    'Date Completed should keep date formatting after migration.'
+  );
+  assertEquals_('0.#', sheet.getNumberFormatByHeader('SLA'), 'SLA should keep number formatting after migration.');
+  assertEquals_(
+    SpreadsheetApp.DataValidationCriteria.CHECKBOX,
+    sheet.getValidationTypeByHeader('Refresh EOD'),
+    'Refresh EOD checkbox validation should be on the migrated column.'
+  );
+  assertEquals_(
+    SpreadsheetApp.DataValidationCriteria.CHECKBOX,
+    sheet.getValidationTypeByHeader('Send Email'),
+    'Send Email checkbox validation should be on the migrated column.'
+  );
+}
+
+function testSummarySetupMigrationIdempotent_() {
+  const oldHeaders = [
+    '_Key',
+    '*',
+    'PDF',
+    'Scanned At',
+    'Carrier',
+    'State',
+    'Customer Name',
+    'Member',
+    'Owner',
+    'Order No.',
+    'Location',
+    'C Number',
+    'B Number',
+    'Date Completed',
+    'SLA',
+    'Refresh EOD',
+    'Send Email'
+  ];
+  const sheet = buildMockMigratableSummarySheet_(oldHeaders, [[
+    TEST_PREFIX + 'SCHEMA_IDEMPOTENT',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    'C123',
+    'B123',
+    '2026-06-02',
+    1,
+    false,
+    false
+  ]]);
+
+  SummaryService.setupSummaryHeaders_(sheet);
+  SummaryService.setupSummaryHeaders_(sheet);
+
+  const headers = sheet.getHeaderValues();
+
+  [
+    'Product Code',
+    'Product Description',
+    'Vintage',
+    'Bottle Size',
+    'Date Completed',
+    'SLA',
+    'Refresh EOD',
+    'Send Email'
+  ].forEach(header => {
+    assertEquals_(
+      1,
+      headers.filter(value => value === header).length,
+      `${header} should not be duplicated by repeated setup.`
+    );
+  });
+}
+
 function testSummaryRefreshEditFilter_() {
   const refreshCol = CONFIG.summary.columns.length + 1;
 
@@ -3037,7 +3202,7 @@ function testRepairAppendMissingSummaryRows_() {
   const summarySheet = SheetService.getSheet_(CONFIG.summary.sheetName);
   const find = findRowByFirstColumnValue_(summarySheet, processingKey);
 
-  assertTruthy_(find.rowNumber > 0, 'Repair helper did not append existing raw row.');
+  assertTruthy_(find.rowNumber > 0, 'Summary sync did not append existing raw row.');
 }
 
 function testRepairAppendIgnoresInflatedSummaryLastRow_() {
@@ -3075,12 +3240,12 @@ function testRepairAppendIgnoresInflatedSummaryLastRow_() {
     assertEquals_(
       existingFind.rowNumber + 1,
       newFind.rowNumber,
-      'Repair helper should append after the last nonblank summary _Key.'
+      'Summary sync should append after the last nonblank summary _Key.'
     );
 
     assertTruthy_(
       newFind.rowNumber !== marker.rowNumber + 1,
-      'Repair helper incorrectly appended after an inflated non-key row.'
+      'Summary sync incorrectly appended after an inflated non-key row.'
     );
   } finally {
     clearInflatedSummaryLastRowMarker_(summarySheet, marker);
@@ -3556,6 +3721,269 @@ function testPdfProcessorHealth_() {
 /**
  * Mock builders
  */
+
+function buildMockMigratableSummarySheet_(headers, dataRows) {
+  const headerRow = Number(CONFIG.summary.headerRow || 2);
+  const startRow = headerRow + 1;
+  const maxRows = Math.max(25, startRow + (dataRows || []).length + 5);
+  const maxCols = Math.max((headers || []).length, 1);
+  const state = {
+    rows: [],
+    notes: [],
+    formats: [],
+    validations: [],
+    frozenRows: 0,
+    hiddenColumns: {},
+    conditionalRules: []
+  };
+
+  function ensureCell(row, col) {
+    while (state.rows.length < row) state.rows.push([]);
+    while (state.notes.length < row) state.notes.push([]);
+    while (state.formats.length < row) state.formats.push([]);
+    while (state.validations.length < row) state.validations.push([]);
+
+    [state.rows, state.notes, state.formats, state.validations].forEach(matrix => {
+      while (matrix[row - 1].length < col) {
+        matrix[row - 1].push(matrix === state.validations ? null : '');
+      }
+    });
+  }
+
+  function getMatrixValue(matrix, row, col) {
+    ensureCell(row, col);
+    return matrix[row - 1][col - 1];
+  }
+
+  function setMatrixValue(matrix, row, col, value) {
+    ensureCell(row, col);
+    matrix[row - 1][col - 1] = value;
+  }
+
+  for (let row = 1; row <= maxRows; row++) {
+    for (let col = 1; col <= maxCols; col++) {
+      ensureCell(row, col);
+    }
+  }
+
+  (headers || []).forEach((header, index) => {
+    setMatrixValue(state.rows, headerRow, index + 1, header);
+  });
+
+  (dataRows || []).forEach((row, rowIndex) => {
+    row.forEach((value, colIndex) => {
+      setMatrixValue(state.rows, startRow + rowIndex, colIndex + 1, value);
+    });
+  });
+
+  function insertColumnBefore_(col) {
+    [state.rows, state.notes, state.formats, state.validations].forEach(matrix => {
+      for (let row = 0; row < matrix.length; row++) {
+        matrix[row].splice(col - 1, 0, matrix === state.validations ? null : '');
+      }
+    });
+  }
+
+  const sheet = {
+    getName: () => CONFIG.summary.sheetName,
+    showSheet() {},
+    setFrozenRows(count) {
+      state.frozenRows = count;
+    },
+    hideColumns(col) {
+      state.hiddenColumns[col] = true;
+    },
+    getLastColumn() {
+      return state.rows.reduce((max, row) => {
+        for (let index = row.length - 1; index >= 0; index--) {
+          if (String(row[index] || '').trim() !== '') {
+            return Math.max(max, index + 1);
+          }
+        }
+
+        return max;
+      }, 0);
+    },
+    getLastRow() {
+      for (let row = state.rows.length - 1; row >= 0; row--) {
+        if (state.rows[row].some(value => String(value || '').trim() !== '')) {
+          return row + 1;
+        }
+      }
+
+      return 0;
+    },
+    getMaxRows() {
+      return state.rows.length;
+    },
+    insertColumnBefore(col) {
+      insertColumnBefore_(col);
+      return this;
+    },
+    insertColumnAfter(col) {
+      insertColumnBefore_(col + 1);
+      return this;
+    },
+    getConditionalFormatRules() {
+      return state.conditionalRules;
+    },
+    setConditionalFormatRules(rules) {
+      state.conditionalRules = rules || [];
+    },
+    getRange(row, col, rowCount, colCount) {
+      return buildMockMigratableRange_(sheet, state, row, col, rowCount || 1, colCount || 1);
+    },
+    getHeaderValues() {
+      return this
+        .getRange(headerRow, 1, 1, this.getLastColumn())
+        .getValues()[0];
+    },
+    getDataValueByHeader(headerName) {
+      const headers = this.getHeaderValues();
+      const col = headers.indexOf(headerName) + 1;
+
+      return col > 0 ? this.getRange(startRow, col).getValue() : '';
+    },
+    getNoteByHeader(headerName) {
+      const headers = this.getHeaderValues();
+      const col = headers.indexOf(headerName) + 1;
+
+      return col > 0 ? this.getRange(startRow, col).getNote() : '';
+    },
+    getNumberFormatByHeader(headerName) {
+      const headers = this.getHeaderValues();
+      const col = headers.indexOf(headerName) + 1;
+
+      return col > 0 ? this.getRange(startRow, col).getNumberFormat() : '';
+    },
+    getValidationTypeByHeader(headerName) {
+      const headers = this.getHeaderValues();
+      const col = headers.indexOf(headerName) + 1;
+      const rule = col > 0 ? this.getRange(startRow, col).getDataValidation() : null;
+
+      return rule && typeof rule.getCriteriaType === 'function'
+        ? rule.getCriteriaType()
+        : '';
+    }
+  };
+
+  return sheet;
+}
+
+function buildMockMigratableRange_(sheet, state, row, col, rowCount, colCount) {
+  function ensureCell(rowNumber, colNumber) {
+    while (state.rows.length < rowNumber) state.rows.push([]);
+    while (state.notes.length < rowNumber) state.notes.push([]);
+    while (state.formats.length < rowNumber) state.formats.push([]);
+    while (state.validations.length < rowNumber) state.validations.push([]);
+
+    [state.rows, state.notes, state.formats, state.validations].forEach(matrix => {
+      while (matrix[rowNumber - 1].length < colNumber) {
+        matrix[rowNumber - 1].push(matrix === state.validations ? null : '');
+      }
+    });
+  }
+
+  function getMatrix(matrix) {
+    const output = [];
+
+    for (let rowOffset = 0; rowOffset < rowCount; rowOffset++) {
+      const rowValues = [];
+
+      for (let colOffset = 0; colOffset < colCount; colOffset++) {
+        ensureCell(row + rowOffset, col + colOffset);
+        rowValues.push(matrix[row + rowOffset - 1][col + colOffset - 1]);
+      }
+
+      output.push(rowValues);
+    }
+
+    return output;
+  }
+
+  function setMatrix(matrix, values) {
+    values.forEach((valueRow, rowOffset) => {
+      valueRow.forEach((value, colOffset) => {
+        ensureCell(row + rowOffset, col + colOffset);
+        matrix[row + rowOffset - 1][col + colOffset - 1] = value;
+      });
+    });
+  }
+
+  return {
+    getSheet() {
+      return sheet;
+    },
+    getColumn() {
+      return col;
+    },
+    getNumColumns() {
+      return colCount;
+    },
+    getValues() {
+      return getMatrix(state.rows);
+    },
+    setValues(values) {
+      setMatrix(state.rows, values);
+      return this;
+    },
+    getValue() {
+      return getMatrix(state.rows)[0][0];
+    },
+    setValue(value) {
+      setMatrix(state.rows, [[value]]);
+      return this;
+    },
+    getNote() {
+      return getMatrix(state.notes)[0][0];
+    },
+    setNote(value) {
+      setMatrix(state.notes, [[value]]);
+      return this;
+    },
+    getNumberFormats() {
+      return getMatrix(state.formats);
+    },
+    setNumberFormats(values) {
+      setMatrix(state.formats, values);
+      return this;
+    },
+    getNumberFormat() {
+      return getMatrix(state.formats)[0][0];
+    },
+    setNumberFormat(value) {
+      setMatrix(
+        state.formats,
+        new Array(rowCount).fill(null).map(() => new Array(colCount).fill(value))
+      );
+      return this;
+    },
+    getDataValidations() {
+      return getMatrix(state.validations);
+    },
+    setDataValidations(values) {
+      setMatrix(state.validations, values);
+      return this;
+    },
+    getDataValidation() {
+      return getMatrix(state.validations)[0][0];
+    },
+    setDataValidation(value) {
+      setMatrix(
+        state.validations,
+        new Array(rowCount).fill(null).map(() => new Array(colCount).fill(value))
+      );
+      return this;
+    },
+    clearContent() {
+      setMatrix(
+        state.rows,
+        new Array(rowCount).fill(null).map(() => new Array(colCount).fill(''))
+      );
+      return this;
+    }
+  };
+}
 
 function buildMockSummaryRefreshEditEvent_(options) {
   const refreshCol = options.refreshCol || CONFIG.summary.columns.length + 1;

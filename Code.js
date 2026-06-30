@@ -3,7 +3,7 @@
  * Main entry points.
  *
  * Critical rules:
- * - setup() is manual / one-time.
+ * - setup() is manual maintenance.
  * - processPrinterEmails() must not run setup().
  * - Gmail labels are thread-level visibility markers only; they are not dedupe.
  * - The Gmail search stays Inbox-only and does not exclude processed/failed
