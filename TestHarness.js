@@ -148,6 +148,7 @@ function getLocalTestCases_(suite) {
     { name: 'Summary send email handler sends valid row once', fn: testSummarySendEmailSendsValidRowOnce_, suite: 'summary_email' },
     { name: 'Summary send email ledger prevents duplicate', fn: testSummarySendEmailSentLedgerPreventsDuplicate_, suite: 'summary_email' },
     { name: 'Summary send email manual uncheck after sent is restored', fn: testSummarySendEmailManualUncheckAfterSentRestored_, suite: 'summary_email' },
+    { name: 'Summary send email edit handler restores sent uncheck without duplicate', fn: testSummarySendEmailEditHandlerRestoresSentUncheckWithoutDuplicate_, suite: 'summary_email' },
     { name: 'Summary send email blocking status prevents duplicate', fn: testSummarySendEmailBlockingStatusPreventsDuplicate_, suite: 'summary_email' },
     { name: 'Summary send email validation failure resets checkbox', fn: testSummarySendEmailValidationFailureResets_, suite: 'summary_email' },
     { name: 'Summary send email missing PDF blocks send', fn: testSummarySendEmailMissingPdfBlocks_, suite: 'summary_email' },
@@ -2546,13 +2547,13 @@ function testSummarySendEmailEditFilter_() {
   );
 
   assertEquals_(
-    false,
+    true,
     isSummarySendEmailEdit_(buildMockSummarySendEmailEditEvent_({
       row: CONFIG.summary.headerRow + 1,
       col: sendCol,
       value: 'FALSE'
     })),
-    'Unchecked edit should be ignored.'
+    'Unchecked Send Email edits should be accepted so sent rows can be restored.'
   );
 
   assertEquals_(
@@ -2585,6 +2586,16 @@ function testSummarySendEmailEditFilter_() {
     })),
     'Edit router should route Send Email edits.'
   );
+
+  assertEquals_(
+    'send_email',
+    getSummaryEditRoute_(buildMockSummarySendEmailEditEvent_({
+      row: CONFIG.summary.headerRow + 1,
+      col: sendCol,
+      value: 'FALSE'
+    })),
+    'Edit router should route unchecked Send Email edits.'
+  );
 }
 
 function testSummarySendEmailSendsValidRowOnce_() {
@@ -2605,6 +2616,8 @@ function testSummarySendEmailSendsValidRowOnce_() {
     'Successful send should record recipient in ledger.'
   );
   assertEquals_(true, result.sheet.getValueByHeader('Send Email'), 'Successful send should leave checkbox checked.');
+  assertEquals_(1, result.sheet.protections.length, 'Successful send should best-effort protect the sent checkbox.');
+  assertEquals_('Send Email', result.sheet.protections[0].headerName, 'Sent checkbox protection should target Send Email.');
   assertEquals_('', ledgerEntry.error, 'Successful send should clear ledger error.');
 }
 
@@ -2642,6 +2655,53 @@ function testSummarySendEmailManualUncheckAfterSentRestored_() {
   assertEquals_('already_sent', result.sendResult.status, 'Sent ledger status should skip send.');
   assertEquals_(0, result.sentEmails.length, 'Manual uncheck after sent should not resend.');
   assertEquals_(true, result.sheet.getValueByHeader('Send Email'), 'Manual uncheck after sent should be restored.');
+}
+
+function testSummarySendEmailEditHandlerRestoresSentUncheckWithoutDuplicate_() {
+  const sendKey = buildTestSummaryEmailSendKey_();
+  const sentEmails = [];
+  const ledger = {
+    [sendKey]: {
+      sendKey,
+      summaryKey: TEST_PREFIX + 'SUMMARY_EMAIL',
+      recipient: CONFIG.summaryEmail.recipient,
+      status: SummaryEmailService.STATUS_SENT,
+      sentAt: new Date('2026-06-01T10:00:00+10:00')
+    }
+  };
+  const sheet = buildMockSummaryEmailSheet_({
+    values: {
+      'Send Email': false
+    }
+  });
+  const lock = buildMockLock_();
+  const range = sheet.getRange(
+    CONFIG.summary.headerRow + 1,
+    getColumnIndex_(['_Key', ...CONFIG.summary.columns.map(column => column.header)], 'Send Email')
+  );
+
+  SummaryEmailService.setMailSenderForTest_(email => {
+    sentEmails.push(email);
+  });
+  SummaryEmailService.setDriveFileGetterForTest_(fileId => buildMockPdfDriveFile_(fileId));
+  SummaryEmailService.setSpreadsheetUrlForTest_(
+    'https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit'
+  );
+  SummaryEmailService.setLedgerForTest_(ledger);
+
+  try {
+    SummaryEmailService.sendSummaryRowFromEdit({
+      range,
+      value: 'FALSE'
+    }, lock);
+  } finally {
+    SummaryEmailService.resetTestDoubles_();
+  }
+
+  assertEquals_(true, lock.released, 'Send Email edit handler should release the lock.');
+  assertEquals_(0, sentEmails.length, 'Restoring a sent checkbox should not send a duplicate email.');
+  assertEquals_(true, sheet.getValueByHeader('Send Email'), 'Sent unchecked edit should be immediately restored.');
+  assertEquals_(SummaryEmailService.STATUS_SENT, ledger[sendKey].status, 'Sent ledger entry should remain successful.');
 }
 
 function testSummarySendEmailBlockingStatusPreventsDuplicate_() {
@@ -3655,6 +3715,21 @@ function buildMockSummaryEmailRange_(state) {
   const headerName = state.headers[state.col - 1];
 
   return {
+    getSheet() {
+      return state.sheet;
+    },
+    getRow() {
+      return state.row;
+    },
+    getColumn() {
+      return state.col;
+    },
+    getNumRows() {
+      return state.rowCount;
+    },
+    getNumColumns() {
+      return state.colCount;
+    },
     getValues() {
       if (state.row === Number(CONFIG.summary.headerRow || 2)) {
         return [state.headers.slice(state.col - 1, state.col - 1 + state.colCount)];

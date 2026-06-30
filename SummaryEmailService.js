@@ -14,6 +14,12 @@ const SummaryEmailService = {
   sendSummaryRowFromEdit(e, lock) {
     try {
       const range = e.range;
+
+      if (this.isUncheckedEditValue_(e.value)) {
+        this.restoreSentCheckboxFromEdit_(range.getSheet(), range.getRow());
+        return;
+      }
+
       this.sendSummaryRowEmail(range.getSheet(), range.getRow());
     } finally {
       lock.releaseLock();
@@ -24,16 +30,18 @@ const SummaryEmailService = {
     this.validateTarget_(sheet, rowNumber);
 
     const context = this.createRowContext_(sheet, rowNumber);
-    const sendKey = this.buildSendKey_(context);
-    const existingEntry = this.getLedgerEntry_(sendKey);
+    const sentEntry = this.getSentLedgerEntryForContext_(context);
 
-    if (existingEntry && existingEntry.status === this.STATUS_SENT) {
+    if (sentEntry) {
       this.setValue_(context, 'Send Email', true);
       this.protectSentEmailCells_(context);
       return {
         status: 'already_sent'
       };
     }
+
+    const sendKey = this.buildSendKey_(context);
+    const existingEntry = this.getLedgerEntry_(sendKey);
 
     if (existingEntry && this.isDuplicateBlockingStatus_(existingEntry.status)) {
       this.setValue_(context, 'Send Email', false);
@@ -102,6 +110,27 @@ const SummaryEmailService = {
         error: this.stringifyError_(err)
       };
     }
+  },
+
+  restoreSentCheckboxFromEdit_(sheet, rowNumber) {
+    this.validateTarget_(sheet, rowNumber);
+
+    const context = this.createRowContext_(sheet, rowNumber);
+    const sentEntry = this.getSentLedgerEntryForContext_(context);
+
+    if (!sentEntry) {
+      this.setValue_(context, 'Send Email', false);
+      return {
+        status: 'not_sent'
+      };
+    }
+
+    this.setValue_(context, 'Send Email', true);
+    this.protectSentEmailCells_(context);
+
+    return {
+      status: 'restored_sent'
+    };
   },
 
   buildSendKey_(context) {
@@ -193,6 +222,10 @@ const SummaryEmailService = {
     const normalized = this.normalizeStatus_(status);
 
     return !!normalized && normalized !== this.STATUS_VALIDATION_FAILED;
+  },
+
+  isUncheckedEditValue_(value) {
+    return value === false || String(value || '').toUpperCase() === 'FALSE';
   },
 
   normalizeStatus_(status) {
@@ -467,6 +500,91 @@ const SummaryEmailService = {
       error: row[8],
       subject: row[9]
     };
+  },
+
+  getSentLedgerEntryForContext_(context) {
+    const summaryKey = String(context.value('_Key') || '').trim();
+    const recipient = this.getRecipient_();
+
+    if (!summaryKey) {
+      return null;
+    }
+
+    const exactEntry = this.getExactSentLedgerEntryForContext_(context);
+
+    if (exactEntry) {
+      return exactEntry;
+    }
+
+    return this.findSentLedgerEntryBySummaryKey_(summaryKey, recipient);
+  },
+
+  getExactSentLedgerEntryForContext_(context) {
+    let sendKey = '';
+
+    try {
+      sendKey = this.buildSendKey_(context);
+    } catch (err) {
+      return null;
+    }
+
+    const entry = this.getLedgerEntry_(sendKey);
+
+    return entry && entry.status === this.STATUS_SENT ? entry : null;
+  },
+
+  findSentLedgerEntryBySummaryKey_(summaryKey, recipient) {
+    if (this.ledgerForTest_) {
+      const keys = Object.keys(this.ledgerForTest_);
+
+      for (let index = 0; index < keys.length; index++) {
+        const entry = this.ledgerForTest_[keys[index]];
+
+        if (this.isSentLedgerEntryForSummary_(entry, summaryKey, recipient)) {
+          return entry;
+        }
+      }
+
+      return null;
+    }
+
+    const sheet = this.getLedgerSheet_();
+
+    if (!sheet || sheet.getLastRow() < 2) {
+      return null;
+    }
+
+    const rows = sheet
+      .getRange(2, 1, sheet.getLastRow() - 1, 10)
+      .getValues();
+
+    for (let index = 0; index < rows.length; index++) {
+      const entry = {
+        sendKey: rows[index][0],
+        summaryKey: rows[index][1],
+        recipient: rows[index][2],
+        pdfFileId: rows[index][3],
+        status: this.normalizeStatus_(rows[index][4]),
+        reservedAt: rows[index][5],
+        sentAt: rows[index][6],
+        updatedAt: rows[index][7],
+        error: rows[index][8],
+        subject: rows[index][9]
+      };
+
+      if (this.isSentLedgerEntryForSummary_(entry, summaryKey, recipient)) {
+        return entry;
+      }
+    }
+
+    return null;
+  },
+
+  isSentLedgerEntryForSummary_(entry, summaryKey, recipient) {
+    return !!entry &&
+      String(entry.summaryKey || '').trim() === summaryKey &&
+      String(entry.recipient || '').trim() === recipient &&
+      this.normalizeStatus_(entry.status) === this.STATUS_SENT;
   },
 
   writeLedgerEntry_(sendKey, context, entry) {

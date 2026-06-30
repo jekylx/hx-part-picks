@@ -133,7 +133,7 @@ function isSummaryRefreshEdit_(e) {
 }
 
 function isSummarySendEmailEdit_(e) {
-  return isSummaryCheckboxEditForHeader_(e, 'Send Email');
+  return isSummaryCheckboxColumnEditForHeader_(e, 'Send Email');
 }
 
 function getSummaryEditRoute_(e) {
@@ -149,6 +149,14 @@ function getSummaryEditRoute_(e) {
 }
 
 function isSummaryCheckboxEditForHeader_(e, headerName) {
+  if (!isSummaryCheckboxColumnEditForHeader_(e, headerName)) {
+    return false;
+  }
+
+  return isCheckedEditValue_(e.value);
+}
+
+function isSummaryCheckboxColumnEditForHeader_(e, headerName) {
   if (!e || !e.range) {
     return false;
   }
@@ -178,7 +186,7 @@ function isSummaryCheckboxEditForHeader_(e, headerName) {
     return false;
   }
 
-  return isCheckedEditValue_(e.value);
+  return true;
 }
 
 function isCheckedEditValue_(value) {
