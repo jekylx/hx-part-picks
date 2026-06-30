@@ -131,7 +131,8 @@ function getLocalTestCases_(suite) {
     { name: 'Sheet setup creates expected sheets', fn: testSheetSetup_, suite: 'sheet_setup' },
     { name: 'Sheet setup protects implementation sheets', fn: testSheetSetupProtectsImplementationSheets_, suite: 'sheet_setup' },
     { name: 'Sheet protection helper is idempotent', fn: testSheetProtectionHelperIdempotent_, suite: 'sheet_setup' },
-    { name: 'Owner-visible internal sheets stay visible and protected', fn: testOwnerVisibleInternalSheetsStayVisible_, suite: 'sheet_setup' },
+    { name: 'New internal sheets are hidden and protected', fn: testNewInternalSheetsAreHiddenAndProtected_, suite: 'sheet_setup' },
+    { name: 'New internal sheet protections retain effective user', fn: testInternalSheetProtectionRetainsOnlyEffectiveUser_, suite: 'sheet_setup' },
     { name: 'Summary sheet removes only HX internal protection', fn: testSummaryProtectionCleanup_, suite: 'sheet_setup' },
     { name: 'Summary setup applies Refresh EOD checkbox validation', fn: testSummaryCheckboxValidation_, suite: 'sheet_setup' },
     { name: 'Summary setup applies Send Email checkbox validation', fn: testSummarySendEmailCheckboxValidation_, suite: 'sheet_setup' },
@@ -2009,7 +2010,11 @@ function testSheetSetup_() {
     CONFIG.summary.sheetName,
     CONFIG.sheets.logSheetName,
     CONFIG.sheets.processedSheetName,
-    CONFIG.sheets.configSheetName
+    CONFIG.sheets.configSheetName,
+    CONFIG.sheets.summaryEmailLedgerSheetName,
+    CONFIG.sheets.eodReportCacheSheetName,
+    CONFIG.sheets.eodOutstandingOrdersCacheSheetName,
+    CONFIG.sheets.eodPalletProductCacheSheetName
   ].forEach(sheetName => {
     assertTruthy_(ss.getSheetByName(sheetName), `Missing sheet: ${sheetName}`);
   });
@@ -2023,23 +2028,17 @@ function testSheetSetupProtectsImplementationSheets_() {
     CONFIG.sheets.extractedSheetName,
     CONFIG.sheets.logSheetName,
     CONFIG.sheets.processedSheetName,
-    CONFIG.sheets.configSheetName
+    CONFIG.sheets.configSheetName,
+    CONFIG.sheets.summaryEmailLedgerSheetName,
+    CONFIG.sheets.eodReportCacheSheetName,
+    CONFIG.sheets.eodOutstandingOrdersCacheSheetName,
+    CONFIG.sheets.eodPalletProductCacheSheetName
   ];
 
   internalSheetNames.forEach(sheetName => {
     const sheet = ss.getSheetByName(sheetName);
-    const protections = SheetService.getScriptInternalProtections_(sheet);
 
-    assertEquals_(
-      1,
-      protections.length,
-      `Expected exactly one HX internal sheet protection on ${sheetName}.`
-    );
-    assertEquals_(
-      SheetService.internalProtectionDescription,
-      protections[0].getDescription(),
-      `Unexpected protection description on ${sheetName}.`
-    );
+    assertInternalSheetProtected_(sheet, sheetName);
   });
 
   const summarySheet = ss.getSheetByName(CONFIG.summary.sheetName);
@@ -2080,23 +2079,70 @@ function testSheetProtectionHelperIdempotent_() {
   );
 }
 
-function testOwnerVisibleInternalSheetsStayVisible_() {
-  const effectiveUser = buildMockUser_('owner@example.com');
-  const visibleInternalSheetNames = [
+function testNewInternalSheetsAreHiddenAndProtected_() {
+  ensureLocalTestSetup_();
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const effectiveUser = Session.getEffectiveUser();
+  const effectiveEmail = SheetService.getUserEmail_(effectiveUser);
+  const newInternalSheetNames = [
     CONFIG.sheets.eodReportCacheSheetName,
     CONFIG.sheets.eodOutstandingOrdersCacheSheetName,
     CONFIG.sheets.eodPalletProductCacheSheetName,
     CONFIG.sheets.summaryEmailLedgerSheetName
   ];
 
-  visibleInternalSheetNames.forEach(sheetName => {
+  newInternalSheetNames.forEach(sheetName => {
+    const sheet = ss.getSheetByName(sheetName);
+    const protection = assertInternalSheetProtected_(sheet, sheetName);
+
+    assertEquals_(true, SheetService.shouldHideImplementationSheet_(sheetName), `${sheetName} should use the normal internal sheet hiding rule.`);
+
+    if (typeof sheet.isSheetHidden === 'function') {
+      assertEquals_(true, sheet.isSheetHidden(), `${sheetName} should be hidden by setup.`);
+    }
+
+    if (effectiveEmail) {
+      const editorEmails = protection.getEditors().map(editor =>
+        SheetService.getUserEmail_(editor)
+      );
+
+      assertTruthy_(
+        editorEmails.indexOf(effectiveEmail) > -1,
+        `${sheetName} should explicitly retain the effective user as protection editor.`
+      );
+    }
+  });
+
+  assertEquals_(
+    false,
+    SheetService.shouldHideImplementationSheet_(CONFIG.summary.sheetName),
+    'Summary should remain visible/editable.'
+  );
+
+  const summarySheet = ss.getSheetByName(CONFIG.summary.sheetName);
+  if (typeof summarySheet.isSheetHidden === 'function') {
+    assertEquals_(false, summarySheet.isSheetHidden(), 'Summary should remain visible after setup.');
+  }
+}
+
+function testInternalSheetProtectionRetainsOnlyEffectiveUser_() {
+  const effectiveUser = buildMockUser_('owner@example.com');
+  const newInternalSheetNames = [
+    CONFIG.sheets.eodReportCacheSheetName,
+    CONFIG.sheets.eodOutstandingOrdersCacheSheetName,
+    CONFIG.sheets.eodPalletProductCacheSheetName,
+    CONFIG.sheets.summaryEmailLedgerSheetName
+  ];
+
+  newInternalSheetNames.forEach(sheetName => {
     const sheet = buildMockProtectableSheet_(sheetName, []);
 
     SheetService.ensureInternalSheetProtection_(sheet, effectiveUser);
 
     const protection = sheet.protections[0];
 
-    assertEquals_(false, SheetService.shouldHideImplementationSheet_(sheetName), `${sheetName} should remain visible to the owner.`);
+    assertEquals_(true, SheetService.shouldHideImplementationSheet_(sheetName), `${sheetName} should use the normal internal sheet hiding rule.`);
     assertEquals_(false, protection.domainEdit, `${sheetName} domain editing should be disabled.`);
     assertEquals_(
       'owner@example.com',
@@ -2129,6 +2175,25 @@ function testSummaryProtectionCleanup_() {
 
   assertEquals_(true, hxProtection.removed, 'HX internal protection should be removed from summary.');
   assertEquals_(false, manualProtection.removed, 'Manual summary protections should not be removed.');
+}
+
+function assertInternalSheetProtected_(sheet, sheetName) {
+  assertTruthy_(sheet, `Missing internal sheet: ${sheetName}`);
+
+  const protections = SheetService.getScriptInternalProtections_(sheet);
+
+  assertEquals_(
+    1,
+    protections.length,
+    `Expected exactly one HX internal sheet protection on ${sheetName}.`
+  );
+  assertEquals_(
+    SheetService.internalProtectionDescription,
+    protections[0].getDescription(),
+    `Unexpected protection description on ${sheetName}.`
+  );
+
+  return protections[0];
 }
 
 function testSummaryCheckboxValidation_() {

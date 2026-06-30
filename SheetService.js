@@ -173,15 +173,7 @@ const SheetService = {
   },
 
   shouldHideImplementationSheet_(sheetName) {
-    const visibleInternalSheets = [
-      CONFIG.sheets.eodReportCacheSheetName,
-      CONFIG.sheets.eodOutstandingOrdersCacheSheetName,
-      CONFIG.sheets.eodPalletProductCacheSheetName,
-      CONFIG.sheets.summaryEmailLedgerSheetName
-    ];
-
-    return sheetName !== CONFIG.summary.sheetName &&
-      visibleInternalSheets.indexOf(sheetName) === -1;
+    return sheetName !== CONFIG.summary.sheetName;
   },
 
   setupSummaryEmailLedger_(ss) {
