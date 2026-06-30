@@ -145,6 +145,8 @@ function getLocalTestCases_(suite) {
     { name: 'Summary setup keeps validations on live header columns', fn: testSummarySetupValidationPlacement_, suite: 'sheet_setup' },
     { name: 'EOD summary context requires live header columns', fn: testEodSummaryContextRequiresLiveHeaders_, suite: 'summary' },
     { name: 'Log writer clears stale validation before append', fn: testLogWriterClearsStaleValidation_, suite: 'sheet_setup' },
+    { name: 'Log writer expands rows before append', fn: testLogWriterExpandsRowsBeforeAppend_, suite: 'sheet_setup' },
+    { name: 'Log writer expands columns before clearing validation', fn: testLogWriterExpandsColumnsBeforeClear_, suite: 'sheet_setup' },
     { name: 'EOD lookup applied log survives stale log validation', fn: testEodLookupAppliedLogSurvivesStaleLogValidation_, suite: 'summary' },
     { name: 'Summary refresh edit handler filters edits strictly', fn: testSummaryRefreshEditFilter_, suite: 'summary' },
     { name: 'Summary refresh edit handler refreshes checked rows', fn: testSummaryRefreshEditHandlerCallsRefresh_, suite: 'summary' },
@@ -2767,6 +2769,65 @@ function testLogWriterClearsStaleValidation_() {
   );
 }
 
+function testLogWriterExpandsRowsBeforeAppend_() {
+  const originalGetSheet = SheetService.getSheet_;
+  const logSheet = buildMockValidationBlockingLogSheet_({ maxRows: 1 });
+  logSheet.rows.push(['existing log row']);
+
+  SheetService.getSheet_ = () => logSheet;
+
+  try {
+    LogService.info('EOD_REPORT_LOOKUP_APPLIED', '', '', 'Summary rows: 40-40');
+  } finally {
+    SheetService.getSheet_ = originalGetSheet;
+  }
+
+  assertEquals_(2, logSheet.rows.length, 'Log writer should append after existing log row.');
+  assertEquals_(
+    1,
+    logSheet.insertedRows,
+    'Log writer should expand Processing Log rows before clearing validations.'
+  );
+  assertEquals_(
+    'EOD_REPORT_LOOKUP_APPLIED',
+    logSheet.rows[1][2],
+    'Log writer should write after expanding Processing Log rows.'
+  );
+}
+
+function testLogWriterExpandsColumnsBeforeClear_() {
+  const originalGetSheet = SheetService.getSheet_;
+  const logSheet = buildMockValidationBlockingLogSheet_({
+    maxColumns: 5,
+    lastColumn: 5
+  });
+
+  SheetService.getSheet_ = () => logSheet;
+
+  try {
+    LogService.info('EOD_REPORT_LOOKUP_APPLIED', '', '', 'Summary rows: 40-40');
+  } finally {
+    SheetService.getSheet_ = originalGetSheet;
+  }
+
+  assertEquals_(1, logSheet.rows.length, 'Log writer should append one log row.');
+  assertEquals_(
+    2,
+    logSheet.insertedColumns,
+    'Log writer should expand Processing Log columns to the log row width.'
+  );
+  assertEquals_(
+    true,
+    logSheet.fullRowValidationCleared,
+    'Log writer should clear validations after Processing Log columns are expanded.'
+  );
+  assertEquals_(
+    'EOD_REPORT_LOOKUP_APPLIED',
+    logSheet.rows[0][2],
+    'Log writer should write after expanding Processing Log columns.'
+  );
+}
+
 function testEodSummaryContextRequiresLiveHeaders_() {
   const sheet = buildMockMigratableSummarySheet_(
     SummaryService.getConfiguredSummaryHeaders_(),
@@ -4426,17 +4487,29 @@ function buildMockValidationRule_(criteriaType) {
   };
 }
 
-function buildMockValidationBlockingLogSheet_() {
+function buildMockValidationBlockingLogSheet_(options) {
+  options = options || {};
+
   const state = {
     rows: [],
     staleValidation: true,
     clearDataValidationsCalled: false,
     fullRowValidationCleared: false,
-    maxColumns: 17
+    maxRows: options.maxRows || 25,
+    maxColumns: options.maxColumns || 17,
+    lastColumn: options.lastColumn || 7,
+    insertedRows: 0,
+    insertedColumns: 0
   };
 
   return {
     rows: state.rows,
+    get insertedRows() {
+      return state.insertedRows;
+    },
+    get insertedColumns() {
+      return state.insertedColumns;
+    },
     get clearDataValidationsCalled() {
       return state.clearDataValidationsCalled;
     },
@@ -4450,12 +4523,45 @@ function buildMockValidationBlockingLogSheet_() {
       return state.rows.length;
     },
     getLastColumn() {
-      return 7;
+      return state.lastColumn;
+    },
+    getMaxRows() {
+      return state.maxRows;
     },
     getMaxColumns() {
       return state.maxColumns;
     },
+    insertRowsAfter(row, count) {
+      if (row !== state.maxRows || count < 1) {
+        throw new Error(`Invalid row insert: after ${row}, count ${count}.`);
+      }
+
+      state.maxRows += count;
+      state.insertedRows += count;
+      return this;
+    },
+    insertColumnsAfter(col, count) {
+      if (col !== state.maxColumns || count < 1) {
+        throw new Error(`Invalid column insert: after ${col}, count ${count}.`);
+      }
+
+      state.maxColumns += count;
+      state.insertedColumns += count;
+      return this;
+    },
     getRange(row, col, rowCount, colCount) {
+      if (row < 1 || col < 1) {
+        throw new Error(`Range starts outside sheet: row ${row}, col ${col}.`);
+      }
+
+      if (row + rowCount - 1 > state.maxRows) {
+        throw new Error(`Range row exceeds sheet: row ${row}, rows ${rowCount}.`);
+      }
+
+      if (col + colCount - 1 > state.maxColumns) {
+        throw new Error(`Range column exceeds sheet: col ${col}, cols ${colCount}.`);
+      }
+
       return {
         clearDataValidations() {
           state.clearDataValidationsCalled = true;

@@ -554,9 +554,33 @@ const LogService = {
         link || ''
       ];
       const nextRow = sheet.getLastRow() + 1;
-      const clearWidth = Math.max(
+      const requiredRows = nextRow;
+      const requiredColumns = Math.max(
         row.length,
-        typeof sheet.getLastColumn === 'function' ? sheet.getLastColumn() : 0,
+        typeof sheet.getLastColumn === 'function' ? sheet.getLastColumn() : 0
+      );
+
+      if (
+        typeof sheet.getMaxRows === 'function' &&
+        typeof sheet.insertRowsAfter === 'function' &&
+        sheet.getMaxRows() < requiredRows
+      ) {
+        sheet.insertRowsAfter(sheet.getMaxRows(), requiredRows - sheet.getMaxRows());
+      }
+
+      if (
+        typeof sheet.getMaxColumns === 'function' &&
+        typeof sheet.insertColumnsAfter === 'function' &&
+        sheet.getMaxColumns() < requiredColumns
+      ) {
+        sheet.insertColumnsAfter(
+          sheet.getMaxColumns(),
+          requiredColumns - sheet.getMaxColumns()
+        );
+      }
+
+      const clearWidth = Math.max(
+        requiredColumns,
         typeof sheet.getMaxColumns === 'function' ? sheet.getMaxColumns() : 0
       );
       const validationRange = sheet.getRange(nextRow, 1, 1, clearWidth);
