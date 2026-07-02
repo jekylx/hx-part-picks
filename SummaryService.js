@@ -179,6 +179,7 @@ const SummaryService = {
     const protectedSequence = [
       'Order Qty',
       'B Qty',
+      'Missing Units',
       'Product Code',
       'Product Description',
       'Vintage',
@@ -403,9 +404,15 @@ const SummaryService = {
       ]);
     }
 
-    sheet
-      .getRange(startRow, slaCol, rowCount, 1)
-      .setFormulas(formulas);
+    const slaRange = sheet.getRange(startRow, slaCol, rowCount, 1);
+
+    if (typeof slaRange.clearDataValidations === 'function') {
+      slaRange.clearDataValidations();
+    } else {
+      slaRange.setDataValidation(null);
+    }
+
+    slaRange.setFormulas(formulas);
   },
 
   formatSummary_(sheet) {

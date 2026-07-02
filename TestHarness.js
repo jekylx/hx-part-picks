@@ -88,6 +88,9 @@ function getLocalTestCases_(suite) {
     { name: 'EOD carrier validation helper works', fn: testEodCarrierValidation_, suite: 'eod' },
     { name: 'EOD state validation helper works', fn: testEodStateValidation_, suite: 'eod' },
     { name: 'Summary maps raw State and Carrier safely', fn: testSummaryMapsRawStateAndCarrier_, suite: 'core' },
+    { name: 'Summary maps raw product defaults', fn: testSummaryMapsRawProductDefaults_, suite: 'core' },
+    { name: 'Summary maps raw quantity defaults', fn: testSummaryMapsRawQuantityDefaults_, suite: 'core' },
+    { name: 'Summary leaves unusable raw Missing Units blank', fn: testSummaryMissingUnitsUnusableBlank_, suite: 'core' },
     { name: 'EOD customer name normalisation helper works', fn: testEodCustomerNameNormalisation_, suite: 'eod' },
     { name: 'EOD report header normalisation helper works', fn: testEodReportHeaderNormalisation_, suite: 'eod' },
     { name: 'EOD report sheet cache writes today as rows', fn: testEodReportSheetCacheWritesToday_, suite: 'eod' },
@@ -143,6 +146,7 @@ function getLocalTestCases_(suite) {
     { name: 'Summary setup applies Refresh checkbox validation', fn: testSummaryCheckboxValidation_, suite: 'sheet_setup' },
     { name: 'Summary setup applies Email checkbox validation', fn: testSummarySendEmailCheckboxValidation_, suite: 'sheet_setup' },
     { name: 'Summary setup migrates product columns without overwriting existing columns', fn: testSummarySetupMigratesProductColumns_, suite: 'sheet_setup' },
+    { name: 'Summary setup inserts Missing Units without overwriting data', fn: testSummarySetupInsertsMissingUnits_, suite: 'sheet_setup' },
     { name: 'Summary setup migration is idempotent', fn: testSummarySetupMigrationIdempotent_, suite: 'sheet_setup' },
     { name: 'Summary setup keeps validations on live header columns', fn: testSummarySetupValidationPlacement_, suite: 'sheet_setup' },
     { name: 'One-off product note parser parses Product Code', fn: testOneOffProductBackfillParsesProductCode_, suite: 'summary' },
@@ -190,8 +194,11 @@ function getLocalTestCases_(suite) {
     { name: 'Coordinator refresh does not append summary rows', fn: testCoordinatorRefreshDoesNotAppend_, suite: 'summary' },
     { name: 'Coordinator refresh uses current summary row values', fn: testCoordinatorRefreshUsesCurrentRowValues_, suite: 'summary' },
     { name: 'Coordinator refresh writes order quantity fields', fn: testCoordinatorRefreshWritesQuantityCells_, suite: 'summary' },
+    { name: 'Coordinator refresh does not overwrite Missing Units', fn: testCoordinatorRefreshDoesNotOverwriteMissingUnits_, suite: 'summary' },
     { name: 'Coordinator refresh writes product tuple cells and B note', fn: testCoordinatorRefreshWritesProductTupleCells_, suite: 'summary' },
     { name: 'Coordinator append enrichment writes product tuple cells and B note', fn: testCoordinatorAppendWritesProductTupleCells_, suite: 'summary' },
+    { name: 'Coordinator append enrichment does not overwrite Missing Units', fn: testCoordinatorAppendDoesNotOverwriteMissingUnits_, suite: 'summary' },
+    { name: 'Summary SLA formulas write only SLA column', fn: testSummaryApplySlaFormulasWritesOnlySlaColumn_, suite: 'summary' },
     { name: 'Summary append live EOD path writes product tuple cells', fn: testSummaryAppendLiveEodPathWritesProductTupleCells_, suite: 'summary' },
     { name: 'Raw row append keeps raw values', fn: testAppendMockRawRow_, suite: 'summary' },
     { name: 'Summary sync appends existing raw rows', fn: testRepairAppendMissingSummaryRows_, suite: 'summary' },
@@ -340,6 +347,7 @@ function testSummaryEmailConfig_() {
     'B Number',
     'Order Qty',
     'B Qty',
+    'Missing Units',
     'Product Code',
     'Product Description',
     'Vintage',
@@ -693,6 +701,75 @@ function testSummaryMapsRawStateAndCarrier_() {
 
   assertEquals_('', values['State'], 'Invalid raw State should not be copied into Summary.');
   assertEquals_('', values['Carrier'], 'Invalid raw Carrier should not be copied into Summary.');
+}
+
+function testSummaryMapsRawProductDefaults_() {
+  const row = SummaryService.buildSummaryRow_(
+    {
+      'Processing Key': 'KEY::PRODUCT_DEFAULTS',
+      'Description': 'Clarendon Hills Brookman',
+      'Vintage': '2008'
+    },
+    'KEY::PRODUCT_DEFAULTS'
+  );
+  const values = summaryRowToObject_(row);
+
+  assertEquals_(
+    'Clarendon Hills Brookman',
+    values['Product Description'],
+    'Raw Description should map into Product Description on append.'
+  );
+  assertEquals_('2008', values['Vintage'], 'Raw Vintage should map into Summary on append.');
+}
+
+function testSummaryMapsRawQuantityDefaults_() {
+  const row = SummaryService.buildSummaryRow_(
+    {
+      'Processing Key': 'KEY::QTY_DEFAULTS',
+      'Total Units': '3 bottles',
+      'Units Missing': '02 bottles'
+    },
+    'KEY::QTY_DEFAULTS'
+  );
+  const values = summaryRowToObject_(row);
+
+  assertEquals_(3, values['Order Qty'], 'Raw Total Units should map into Order Qty on append.');
+  assertEquals_(2, values['Missing Units'], 'Raw Units Missing should map into Missing Units on append.');
+}
+
+function testSummaryMissingUnitsUnusableBlank_() {
+  let row = SummaryService.buildSummaryRow_(
+    {
+      'Processing Key': 'KEY::MISSING_UNITS_ZERO',
+      'Units Missing': '0'
+    },
+    'KEY::MISSING_UNITS_ZERO'
+  );
+  let values = summaryRowToObject_(row);
+
+  assertEquals_(0, values['Missing Units'], 'Zero Missing Units should be preserved.');
+
+  row = SummaryService.buildSummaryRow_(
+    {
+      'Processing Key': 'KEY::MISSING_UNITS_NA',
+      'Units Missing': 'N/A'
+    },
+    'KEY::MISSING_UNITS_NA'
+  );
+  values = summaryRowToObject_(row);
+
+  assertEquals_('', values['Missing Units'], 'N/A Missing Units should stay blank.');
+
+  row = SummaryService.buildSummaryRow_(
+    {
+      'Processing Key': 'KEY::MISSING_UNITS_AMBIGUOUS',
+      'Units Missing': '2 x 12pk'
+    },
+    'KEY::MISSING_UNITS_AMBIGUOUS'
+  );
+  values = summaryRowToObject_(row);
+
+  assertEquals_('', values['Missing Units'], 'Ambiguous Missing Units should stay blank.');
 }
 
 function testEodCustomerNameNormalisation_() {
@@ -2730,6 +2807,7 @@ function testSummarySetupMigratesProductColumns_() {
       'B Number',
       'Order Qty',
       'B Qty',
+      'Missing Units',
       'Product Code',
       'Product Description',
       'Vintage',
@@ -2753,6 +2831,7 @@ function testSummarySetupMigratesProductColumns_() {
     assertEquals_('B123', sheet.getDataValueByHeader('B Number'), 'B Number data must stay put.');
     assertEquals_('', sheet.getDataValueByHeader('Order Qty'), 'Inserted Order Qty should be blank.');
     assertEquals_('', sheet.getDataValueByHeader('B Qty'), 'Inserted B Qty should be blank.');
+    assertEquals_('', sheet.getDataValueByHeader('Missing Units'), 'Inserted Missing Units should be blank.');
     assertEquals_('', sheet.getDataValueByHeader('Product Code'), 'Inserted Product Code should be blank.');
     assertEquals_('', sheet.getDataValueByHeader('Product Description'), 'Inserted Product Description should be blank.');
     assertEquals_('', sheet.getDataValueByHeader('Vintage'), 'Inserted Vintage should be blank.');
@@ -2796,6 +2875,7 @@ function testSummarySetupMigratesProductColumns_() {
       'Product Code',
       'Order Qty',
       'B Qty',
+      'Missing Units',
       'Product Description',
       'Vintage',
       'Bottle Size',
@@ -2819,6 +2899,97 @@ function testSummarySetupMigratesProductColumns_() {
   } finally {
     restoreConditionalFormatBuilder();
   }
+}
+
+function testSummarySetupInsertsMissingUnits_() {
+  const refreshHeader = summaryRefreshHeaderForTest_();
+  const sendHeader = summarySendEmailHeaderForTest_();
+  const oldHeaders = [
+    '_Key',
+    '*',
+    'PDF',
+    'Scanned At',
+    'Carrier',
+    'State',
+    'Customer Name',
+    'Member',
+    'Owner',
+    'Order No.',
+    'Location',
+    'C Number',
+    'B Number',
+    'Order Qty',
+    'B Qty',
+    'Product Code',
+    'Product Description',
+    'Vintage',
+    'Bottle Size',
+    'Date Completed',
+    'SLA',
+    refreshHeader,
+    sendHeader,
+    'Notes'
+  ];
+  const sheet = buildMockMigratableSummarySheet_(oldHeaders, [[
+    TEST_PREFIX + 'SCHEMA_MISSING_UNITS',
+    '',
+    'Open PDF',
+    new Date('2026-06-01T09:00:00+10:00'),
+    'AP',
+    'VIC',
+    'Customer',
+    'MEM1',
+    'OWNER1',
+    '1234567',
+    'A0101',
+    'C123',
+    'B123',
+    12,
+    4,
+    'P001',
+    'Existing Product',
+    '2020',
+    '750ML',
+    '2026-06-02',
+    1.5,
+    true,
+    false,
+    'manual note column'
+  ]]);
+  const productCol = oldHeaders.indexOf('Product Code') + 1;
+  const productRule = {
+    getCriteriaType() {
+      return 'PRODUCT_RULE';
+    }
+  };
+
+  sheet
+    .getRange(CONFIG.summary.headerRow + 1, productCol)
+    .setNote('Keep product note')
+    .setNumberFormat('@')
+    .setDataValidation(productRule);
+
+  SummaryService.setupSummaryHeaders_(sheet);
+
+  assertSummaryHeaderOrder_(sheet.getHeaderValues());
+  assertEquals_('', sheet.getDataValueByHeader('Missing Units'), 'Inserted Missing Units should be blank.');
+  assertEquals_('P001', sheet.getDataValueByHeader('Product Code'), 'Product Code data must shift right.');
+  assertEquals_('Keep product note', sheet.getNoteByHeader('Product Code'), 'Product Code note must shift right.');
+  assertEquals_('@', sheet.getNumberFormatByHeader('Product Code'), 'Product Code format must shift right.');
+  assertEquals_('PRODUCT_RULE', sheet.getValidationTypeByHeader('Product Code'), 'Product Code validation must shift right.');
+  assertEquals_(true, sheet.getDataValueByHeader(refreshHeader), `${refreshHeader} checkbox value must shift right.`);
+  assertEquals_(false, sheet.getDataValueByHeader(sendHeader), `${sendHeader} checkbox value must shift right.`);
+
+  SummaryService.setupSummaryHeaders_(sheet);
+
+  const headers = sheet.getHeaderValues();
+  assertSummaryHeaderOrder_(headers);
+  assertEquals_(
+    1,
+    headers.filter(value => value === 'Missing Units').length,
+    'Missing Units should not be duplicated by repeated setup.'
+  );
+  assertEquals_('P001', sheet.getDataValueByHeader('Product Code'), 'Product Code data must survive repeated setup.');
 }
 
 function testSummarySetupMigrationIdempotent_() {
@@ -2872,6 +3043,7 @@ function testSummarySetupMigrationIdempotent_() {
   [
     'Order Qty',
     'B Qty',
+    'Missing Units',
     'Product Code',
     'Product Description',
     'Vintage',
@@ -3920,6 +4092,7 @@ function testSummarySendEmailNonDisplayedFieldsDoNotBlock_() {
     values: {
       'Date Completed': '',
       'SLA': '',
+      'Missing Units': '',
       [refreshHeader]: '',
       [sendHeader]: true
     },
@@ -4154,6 +4327,60 @@ function testCoordinatorRefreshWritesQuantityCells_() {
   assertEquals_(4, sheet.getDataValueByHeader('B Qty'), 'Manual Refresh EOD should write B Qty.');
 }
 
+function testCoordinatorRefreshDoesNotOverwriteMissingUnits_() {
+  const headers = SummaryService.getConfiguredSummaryHeaders_();
+  const row = new Array(headers.length).fill('');
+  const rowNumber = Number(CONFIG.summary.headerRow || 2) + 1;
+
+  row[headers.indexOf('_Key')] = TEST_PREFIX + 'REFRESH_MISSING_UNITS';
+  row[headers.indexOf('Scanned At')] = new Date('2026-05-01T09:30:00+10:00');
+  row[headers.indexOf('Order No.')] = '7654321';
+  row[headers.indexOf('B Number')] = 'B1234567';
+  row[headers.indexOf('Missing Units')] = 2;
+
+  const sheet = buildMockMigratableSummarySheet_(headers, [row]);
+  const originalOutstandingLookup = OutstandingOrdersEodReportService.getLookupForDate_;
+  const originalPallet = PalletAndProductByMembersEodReportService.applyToSummaryRows;
+
+  OutstandingOrdersEodReportService.getLookupForDate_ = () => ({
+    byOrderNumber: {
+      7654321: {
+        orderNumber: '7654321',
+        orderTotalQtyOrd: 9,
+        ambiguous: false,
+        bNumbers: {}
+      }
+    },
+    byOrderNumberAndBNumber: {
+      '7654321::B1234567': {
+        orderNumber: '7654321',
+        searchCriteriaBNumber: 'B1234567',
+        owner: 'ABCDE',
+        customerName: 'Example Customer',
+        carrierCode: 'AP',
+        customerState: 'VIC',
+        qtyOrdSum: 4,
+        ambiguous: false,
+        ambiguityReasons: [],
+        rows: []
+      }
+    }
+  });
+
+  PalletAndProductByMembersEodReportService.applyToSummaryRows = () =>
+    PalletAndProductByMembersEodReportService.createResult_();
+
+  try {
+    EodReportCoordinator.refreshSummaryRow(sheet, rowNumber);
+  } finally {
+    OutstandingOrdersEodReportService.getLookupForDate_ = originalOutstandingLookup;
+    PalletAndProductByMembersEodReportService.applyToSummaryRows = originalPallet;
+  }
+
+  assertEquals_(2, sheet.getDataValueByHeader('Missing Units'), 'Manual Refresh EOD must not overwrite Missing Units.');
+  assertEquals_(9, sheet.getDataValueByHeader('Order Qty'), 'Manual Refresh EOD should still write Order Qty.');
+}
+
 function testCoordinatorRefreshWritesProductTupleCells_() {
   const sheet = buildProductTupleSummarySheet_();
   const restore = stubCoordinatorProductTupleLookups_();
@@ -4185,6 +4412,101 @@ function testCoordinatorAppendWritesProductTupleCells_() {
   }
 
   assertSummaryProductTupleWritten_(sheet, 'Append EOD enrichment should write product tuple cells.');
+}
+
+function testCoordinatorAppendDoesNotOverwriteMissingUnits_() {
+  const sheet = buildProductTupleSummarySheet_();
+  const restore = stubCoordinatorProductTupleLookups_();
+
+  sheet
+    .getRange(
+      Number(CONFIG.summary.headerRow || 2) + 1,
+      sheet.getColumnByHeader('Missing Units')
+    )
+    .setValue(2);
+
+  try {
+    EodReportCoordinator.applyToSummaryRows(
+      sheet,
+      Number(CONFIG.summary.headerRow || 2) + 1,
+      1
+    );
+  } finally {
+    restore();
+  }
+
+  assertEquals_(2, sheet.getDataValueByHeader('Missing Units'), 'Append EOD enrichment must not overwrite Missing Units.');
+  assertSummaryProductTupleWritten_(sheet, 'Append EOD enrichment should still write product tuple cells.');
+}
+
+function testSummaryApplySlaFormulasWritesOnlySlaColumn_() {
+  const headers = SummaryService.getConfiguredSummaryHeaders_();
+  const row = headers.map(header => {
+    const values = {
+      '_Key': TEST_PREFIX + 'SLA_ONLY',
+      'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
+      'Order No.': '7654321',
+      'B Number': 'B1234567',
+      'Missing Units': 2,
+      'Date Completed': '2026-06-02',
+      'SLA': 'old'
+    };
+
+    return Object.prototype.hasOwnProperty.call(values, header)
+      ? values[header]
+      : '';
+  });
+  const sheet = buildMockMigratableSummarySheet_(headers, [row]);
+  const rowNumber = Number(CONFIG.summary.headerRow || 2) + 1;
+  const before = sheet
+    .getRange(rowNumber, 1, 1, headers.length)
+    .getValues()[0];
+  const staleDateRule = buildMockValidationRule_('STALE_DATE_COMPLETED');
+  const dateCompletedCol = sheet.getColumnByHeader('Date Completed');
+  const slaCol = sheet.getColumnByHeader('SLA');
+
+  sheet
+    .getRange(rowNumber, dateCompletedCol)
+    .setDataValidation(staleDateRule);
+  sheet
+    .getRange(rowNumber, slaCol)
+    .setDataValidation(staleDateRule);
+
+  SummaryService.applySlaFormulas_(sheet, rowNumber, 1);
+
+  const after = sheet
+    .getRange(rowNumber, 1, 1, headers.length)
+    .getValues()[0];
+
+  headers.forEach((header, index) => {
+    if (header === 'SLA') {
+      assertContains_(after[index], '=IF(', 'SLA should receive the SLA formula.');
+      return;
+    }
+
+    assertEquals_(
+      before[index],
+      after[index],
+      `${header} should not be changed while applying SLA formulas.`
+    );
+  });
+
+  assertEquals_(
+    '2026-06-02',
+    sheet.getDataValueByHeader('Date Completed'),
+    'Date Completed value must not be written by SLA formula application.'
+  );
+  assertEquals_(
+    'STALE_DATE_COMPLETED',
+    sheet.getValidationTypeByHeader('Date Completed'),
+    'Date Completed validation must remain untouched.'
+  );
+  assertEquals_(
+    '',
+    sheet.getValidationTypeByHeader('SLA'),
+    'Only the SLA target validation should be cleared before formulas are written.'
+  );
+  assertEquals_(2, sheet.getDataValueByHeader('Missing Units'), 'Missing Units must stay untouched.');
 }
 
 function testEodLookupAppliedLogSurvivesStaleLogValidation_() {
@@ -4248,7 +4570,9 @@ function testSummaryAppendLiveEodPathWritesProductTupleCells_() {
     'Product Code',
     'Product Description',
     'Vintage',
-    'Bottle Size'
+    'Bottle Size',
+    'Date Completed',
+    'SLA'
   ];
   const originalOutstandingLookup = OutstandingOrdersEodReportService.getLookupForDate_;
   const originalPalletLookup = PalletAndProductByMembersEodReportService.getLookupForDate_;
@@ -4353,6 +4677,14 @@ function testSummaryAppendLiveEodPathWritesProductTupleCells_() {
     'B Qty',
     '4',
     'Summary append live EOD path should write B Qty.'
+  );
+  assertCellDisplayValue_(
+    summarySheet,
+    find.rowNumber,
+    headers,
+    'Missing Units',
+    '2',
+    'Summary append live EOD path should not let EOD overwrite Missing Units.'
   );
   assertEquals_(false, errorLogged, 'Live EOD path should not log an EOD failure.');
 
@@ -5205,6 +5537,7 @@ function assertSummaryHeaderOrder_(headers) {
     'B Number',
     'Order Qty',
     'B Qty',
+    'Missing Units',
     'Product Code',
     'Product Description',
     'Vintage',
@@ -5551,6 +5884,10 @@ function buildMockMigratableRange_(sheet, state, row, col, rowCount, colCount) {
       return getMatrix(state.rows);
     },
     setValues(values) {
+      setMatrix(state.rows, values);
+      return this;
+    },
+    setFormulas(values) {
       setMatrix(state.rows, values);
       return this;
     },

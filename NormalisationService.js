@@ -24,6 +24,12 @@ const NormalisationService = {
       return this.normalizeCarrier_(value) || '';
     }
 
+    if (fieldKey === 'total_bottle_count' || fieldKey === 'bottles_missing') {
+      const count = this.normalizeCount_(value);
+
+      return count == null ? '' : count;
+    }
+
     return value;
   },
 
@@ -142,6 +148,30 @@ const NormalisationService = {
     };
 
     return aliases[cleaned] || null;
+  },
+
+  normalizeCount_(value) {
+    if (value == null || value === '') {
+      return null;
+    }
+
+    const cleaned = String(value)
+      .replace(/,/g, '')
+      .trim();
+
+    if (!cleaned || /^N\s*\/?\s*A$/i.test(cleaned)) {
+      return null;
+    }
+
+    const matches = cleaned.match(/\d+(?:\.\d+)?/g) || [];
+
+    if (matches.length !== 1) {
+      return null;
+    }
+
+    const numberValue = Number(matches[0]);
+
+    return isFinite(numberValue) ? numberValue : null;
   }
 };
 
