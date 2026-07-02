@@ -177,6 +177,8 @@ const SummaryService = {
     }
 
     const protectedSequence = [
+      'Order Qty',
+      'B Qty',
       'Product Code',
       'Product Description',
       'Vintage',
@@ -443,6 +445,9 @@ const SummaryService = {
     const dateCols = this.getConfiguredColumnIndexes_(headers, column =>
       column.type === 'date'
     );
+    const numberCols = this.getConfiguredColumnIndexes_(headers, column =>
+      column.type === 'number'
+    );
     const formattedCols = {};
     const slaCol = this.getSlaColumn_(headers);
     const startRow = this.summaryDataStartRow_();
@@ -464,6 +469,13 @@ const SummaryService = {
       sheet
         .getRange(startRow, col, rowCount, 1)
         .setNumberFormat(SheetService.dateNumberFormat);
+    });
+
+    numberCols.forEach(col => {
+      formattedCols[col] = true;
+      sheet
+        .getRange(startRow, col, rowCount, 1)
+        .setNumberFormat('0.########');
     });
 
     headers.forEach((header, index) => {
@@ -521,6 +533,8 @@ const SummaryService = {
     }
 
     [
+      'Order Qty',
+      'B Qty',
       'Product Code',
       'Product Description',
       'Vintage',

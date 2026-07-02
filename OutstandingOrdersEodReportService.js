@@ -12,6 +12,7 @@ const OutstandingOrdersEodReportService = {
       );
 
       if (!dateReceived) {
+        this.clearQuantityFields_(context, rowIndex);
         EodReportValidationService.noMatch(
           validationRows,
           rowIndex,
@@ -46,34 +47,52 @@ const OutstandingOrdersEodReportService = {
     const bNumber = EodReportNormalisationService.normalizeBNumber(beforeBNumber);
 
     if (!orderNumber) {
+      this.clearQuantityFields_(context, rowIndex);
       EodReportValidationService.noMatch(
         validationRows,
         rowIndex,
-        `${reportConfig.displayName}: no order number to validate.`
+        'Order Qty blocked: no unique order match.'
       );
       result.notFound++;
-      return;
-    }
-
-    if (!/^B\d{7}$/.test(bNumber)) {
-      EodReportValidationService.noMatch(
-        validationRows,
-        rowIndex,
-        `${reportConfig.displayName}: correction blocked: no B Number to match against Outstanding Orders Search Criteria.`
-      );
-      result.blocked++;
       return;
     }
 
     result.checked++;
 
     if (!lookup) {
+      this.clearQuantityFields_(context, rowIndex);
       EodReportValidationService.noMatch(
         validationRows,
         rowIndex,
-        `${reportConfig.displayName}: no report found for ${dateKey}.`
+        'Order Qty blocked: no unique order match.'
       );
       result.notFound++;
+      return;
+    }
+
+    const orderLookup = lookup.byOrderNumber[orderNumber];
+
+    if (!orderLookup || orderLookup.ambiguous) {
+      this.clearQuantityFields_(context, rowIndex);
+      EodReportValidationService.noMatch(
+        validationRows,
+        rowIndex,
+        'Order Qty blocked: no unique order match.'
+      );
+      result.blocked++;
+      return;
+    }
+
+    context.setValue(summaryColumns.orderQty, rowIndex, orderLookup.orderTotalQtyOrd);
+
+    if (!/^B\d{7}$/.test(bNumber)) {
+      context.setValue(summaryColumns.bQty, rowIndex, '');
+      EodReportValidationService.noMatch(
+        validationRows,
+        rowIndex,
+        'B Qty blocked: no safe Order+B match.'
+      );
+      result.blocked++;
       return;
     }
 
@@ -81,31 +100,28 @@ const OutstandingOrdersEodReportService = {
     const match = lookup.byOrderNumberAndBNumber[matchKey];
 
     if (!match) {
+      context.setValue(summaryColumns.bQty, rowIndex, '');
       EodReportValidationService.noMatch(
         validationRows,
         rowIndex,
-        [
-          `${reportConfig.displayName}: correction blocked: no Outstanding Orders line matched Order No. ${orderNumber} and B Number ${bNumber}.`,
-          'Order-only matches are not safe because one order can contain multiple stock lines.'
-        ].join('\n')
+        'B Qty blocked: no safe Order+B match.'
       );
       result.blocked++;
       return;
     }
 
     if (match.ambiguous) {
+      context.setValue(summaryColumns.bQty, rowIndex, '');
       EodReportValidationService.noMatch(
         validationRows,
         rowIndex,
-        [
-          `${reportConfig.displayName}: correction blocked: ambiguous Outstanding Orders lines for Order No. ${orderNumber} and B Number ${bNumber}.`,
-          'Identity fields disagree within the matched stock line group.',
-          `Reasons: ${match.ambiguityReasons.join(', ')}`
-        ].join('\n')
+        'B Qty blocked: ambiguous Order+B quantity.'
       );
       result.blocked++;
       return;
     }
+
+    context.setValue(summaryColumns.bQty, rowIndex, match.qtyOrdSum);
 
     if (!EodReportNormalisationService.normalizeOwner(match.owner)) {
       EodReportValidationService.noMatch(
@@ -314,6 +330,8 @@ const OutstandingOrdersEodReportService = {
         qtyOrd
       };
 
+      this.addRecordToOrderLookup_(orderLookup, record);
+
       if (searchCriteriaBNumber.status !== 'ok') {
         return;
       }
@@ -336,11 +354,32 @@ const OutstandingOrdersEodReportService = {
       lookup.byOrderNumber[orderNumber] = {
         orderNumber,
         orderTotalQtyOrd: 0,
+        owner: '',
+        ambiguous: false,
+        ambiguityReasons: [],
+        rows: [],
         bNumbers: {}
       };
     }
 
     return lookup.byOrderNumber[orderNumber];
+  },
+
+  addRecordToOrderLookup_(orderLookup, record) {
+    if (orderLookup.rows.length === 0) {
+      orderLookup.owner = record.owner || '';
+    } else if (
+      EodReportNormalisationService.normalizeOwner(orderLookup.owner) !==
+        EodReportNormalisationService.normalizeOwner(record.owner)
+    ) {
+      orderLookup.ambiguous = true;
+
+      if (orderLookup.ambiguityReasons.indexOf('owner') === -1) {
+        orderLookup.ambiguityReasons.push('owner');
+      }
+    }
+
+    orderLookup.rows.push(record);
   },
 
   ensureBNumberGroup_(lookup, orderLookup, orderNumber, bNumber) {
@@ -435,6 +474,13 @@ const OutstandingOrdersEodReportService = {
 
   orderBNumberKey_(orderNumber, bNumber) {
     return `${orderNumber}::${bNumber}`;
+  },
+
+  clearQuantityFields_(context, rowIndex) {
+    const summaryColumns = this.reportConfig_().summaryColumns;
+
+    context.setValue(summaryColumns.orderQty, rowIndex, '');
+    context.setValue(summaryColumns.bQty, rowIndex, '');
   },
 
   createResult_() {

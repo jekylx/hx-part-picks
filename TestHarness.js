@@ -107,7 +107,9 @@ function getLocalTestCases_(suite) {
     { name: 'Outstanding Orders guards carrier and state corrections', fn: testOutstandingOrdersCarrierStateGuards_, suite: 'eod' },
     { name: 'Outstanding Orders groups by Order and Search Criteria B Number', fn: testOutstandingOrdersGroupsByOrderAndBNumber_, suite: 'eod' },
     { name: 'Outstanding Orders summary row matches correct Order+B line', fn: testOutstandingOrdersSummaryMatchesCorrectOrderBLine_, suite: 'eod' },
+    { name: 'Outstanding Orders writes Order Qty and matched B Qty', fn: testOutstandingOrdersWritesMatchedQuantities_, suite: 'eod' },
     { name: 'Outstanding Orders repeated same-B rows sum quantity', fn: testOutstandingOrdersRepeatedSameBQty_, suite: 'eod' },
+    { name: 'Outstanding Orders blocks quantity fields safely', fn: testOutstandingOrdersQuantityBlocks_, suite: 'eod' },
     { name: 'Outstanding Orders canonical identity avoids false ambiguity', fn: testOutstandingOrdersCanonicalIdentityNotAmbiguous_, suite: 'eod' },
     { name: 'Outstanding Orders ambiguous same-B group blocks corrections', fn: testOutstandingOrdersAmbiguousGroupBlocks_, suite: 'eod' },
     { name: 'Outstanding Orders canonical identity detects true ambiguity', fn: testOutstandingOrdersCanonicalIdentityAmbiguous_, suite: 'eod' },
@@ -187,6 +189,7 @@ function getLocalTestCases_(suite) {
     { name: 'Coordinator refresh processes exactly one summary row', fn: testCoordinatorRefreshProcessesOneRow_, suite: 'summary' },
     { name: 'Coordinator refresh does not append summary rows', fn: testCoordinatorRefreshDoesNotAppend_, suite: 'summary' },
     { name: 'Coordinator refresh uses current summary row values', fn: testCoordinatorRefreshUsesCurrentRowValues_, suite: 'summary' },
+    { name: 'Coordinator refresh writes order quantity fields', fn: testCoordinatorRefreshWritesQuantityCells_, suite: 'summary' },
     { name: 'Coordinator refresh writes product tuple cells and B note', fn: testCoordinatorRefreshWritesProductTupleCells_, suite: 'summary' },
     { name: 'Coordinator append enrichment writes product tuple cells and B note', fn: testCoordinatorAppendWritesProductTupleCells_, suite: 'summary' },
     { name: 'Summary append live EOD path writes product tuple cells', fn: testSummaryAppendLiveEodPathWritesProductTupleCells_, suite: 'summary' },
@@ -335,6 +338,8 @@ function testSummaryEmailConfig_() {
     'Location',
     'C Number',
     'B Number',
+    'Order Qty',
+    'B Qty',
     'Product Code',
     'Product Description',
     'Vintage',
@@ -1309,6 +1314,53 @@ function testOutstandingOrdersSummaryMatchesCorrectOrderBLine_() {
   }
 }
 
+function testOutstandingOrdersWritesMatchedQuantities_() {
+  const context = buildMockOutstandingOrdersContext_({
+    'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
+    'Owner': '',
+    'Order No.': '1400001',
+    'Customer Name': 'Old Customer',
+    'Carrier': '',
+    'State': '',
+    'B Number': 'B1234502',
+    'Order Qty': '',
+    'B Qty': ''
+  });
+  const validationRows = EodReportValidationService.create(1);
+  const result = OutstandingOrdersEodReportService.createResult_();
+  const lookup = OutstandingOrdersEodReportService.buildLookup_(
+    buildMockOutstandingOrdersReport_([
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'TESTA1400001',
+        searchCriteria: 'BB&V1990&OB1234501',
+        qtyOrd: '2'
+      }),
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'TESTA1400001',
+        searchCriteria: 'BB&V1990&OB1234502',
+        qtyOrd: '1'
+      }),
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'TESTA1400001',
+        searchCriteria: 'BB&V1990&OB1234502',
+        qtyOrd: '3'
+      })
+    ])
+  );
+
+  OutstandingOrdersEodReportService.applyRow_(
+    context,
+    validationRows,
+    0,
+    lookup,
+    '2026-05-01',
+    result
+  );
+
+  assertEquals_(6, context.values['Order Qty'], 'Order Qty should sum every EOD quantity for the order.');
+  assertEquals_(4, context.values['B Qty'], 'B Qty should sum only the matched Order+B rows.');
+}
+
 function testOutstandingOrdersRepeatedSameBQty_() {
   const rows = [1, 1, 2, 1].map(qtyOrd => buildOutstandingOrdersCsvRow_({
     orderNo: 'TESTB1400002',
@@ -1325,6 +1377,166 @@ function testOutstandingOrdersRepeatedSameBQty_() {
   assertEquals_(5, group.qtyOrdSum, 'Repeated same-B rows should sum to B group quantity.');
   assertEquals_(false, group.ambiguous, 'Repeated identical same-B rows should not be ambiguous.');
   assertEquals_(4, group.rows.length, 'Repeated same-B rows should be preserved on the group.');
+}
+
+function testOutstandingOrdersQuantityBlocks_() {
+  let validationRows = EodReportValidationService.create(1);
+  let result = OutstandingOrdersEodReportService.createResult_();
+  let context = buildMockOutstandingOrdersContext_({
+    'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
+    'Owner': '',
+    'Order No.': '',
+    'Customer Name': '',
+    'Carrier': '',
+    'State': '',
+    'B Number': 'B1234567',
+    'Order Qty': 99,
+    'B Qty': 88
+  });
+
+  OutstandingOrdersEodReportService.applyRow_(
+    context,
+    validationRows,
+    0,
+    { byOrderNumber: {}, byOrderNumberAndBNumber: {} },
+    '2026-05-01',
+    result
+  );
+
+  assertEquals_('', context.values['Order Qty'], 'Missing order should blank Order Qty.');
+  assertEquals_('', context.values['B Qty'], 'Missing order should blank B Qty.');
+  assertContains_(
+    validationRows[0].notes.join('\n'),
+    'Order Qty blocked: no unique order match.',
+    'Missing order should add the short Order Qty blocked note.'
+  );
+
+  validationRows = EodReportValidationService.create(1);
+  result = OutstandingOrdersEodReportService.createResult_();
+  context = buildMockOutstandingOrdersContext_({
+    'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
+    'Owner': '',
+    'Order No.': '123',
+    'Customer Name': '',
+    'Carrier': '',
+    'State': '',
+    'B Number': 'B1234567',
+    'Order Qty': 99,
+    'B Qty': 88
+  });
+
+  OutstandingOrdersEodReportService.applyRow_(
+    context,
+    validationRows,
+    0,
+    {
+      byOrderNumber: {
+        123: {
+          orderNumber: '123',
+          orderTotalQtyOrd: 7,
+          ambiguous: true,
+          bNumbers: {}
+        }
+      },
+      byOrderNumberAndBNumber: {}
+    },
+    '2026-05-01',
+    result
+  );
+
+  assertEquals_('', context.values['Order Qty'], 'Ambiguous order should blank Order Qty.');
+  assertEquals_('', context.values['B Qty'], 'Ambiguous order should blank B Qty.');
+
+  validationRows = EodReportValidationService.create(1);
+  result = OutstandingOrdersEodReportService.createResult_();
+  context = buildMockOutstandingOrdersContext_({
+    'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
+    'Owner': '',
+    'Order No.': '123',
+    'Customer Name': '',
+    'Carrier': '',
+    'State': '',
+    'B Number': '',
+    'Order Qty': '',
+    'B Qty': 88
+  });
+
+  OutstandingOrdersEodReportService.applyRow_(
+    context,
+    validationRows,
+    0,
+    {
+      byOrderNumber: {
+        123: {
+          orderNumber: '123',
+          orderTotalQtyOrd: 7,
+          ambiguous: false,
+          bNumbers: {}
+        }
+      },
+      byOrderNumberAndBNumber: {}
+    },
+    '2026-05-01',
+    result
+  );
+
+  assertEquals_(7, context.values['Order Qty'], 'Safe order should still write Order Qty when B is missing.');
+  assertEquals_('', context.values['B Qty'], 'Missing B should blank B Qty.');
+  assertContains_(
+    validationRows[0].notes.join('\n'),
+    'B Qty blocked: no safe Order+B match.',
+    'Missing B should add the short B Qty blocked note.'
+  );
+
+  validationRows = EodReportValidationService.create(1);
+  result = OutstandingOrdersEodReportService.createResult_();
+  context = buildMockOutstandingOrdersContext_({
+    'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
+    'Owner': '',
+    'Order No.': '123',
+    'Customer Name': '',
+    'Carrier': '',
+    'State': '',
+    'B Number': 'B1234567',
+    'Order Qty': '',
+    'B Qty': 88
+  });
+
+  OutstandingOrdersEodReportService.applyRow_(
+    context,
+    validationRows,
+    0,
+    {
+      byOrderNumber: {
+        123: {
+          orderNumber: '123',
+          orderTotalQtyOrd: 7,
+          ambiguous: false,
+          bNumbers: {}
+        }
+      },
+      byOrderNumberAndBNumber: {
+        '123::B1234567': {
+          orderNumber: '123',
+          searchCriteriaBNumber: 'B1234567',
+          qtyOrdSum: 4,
+          ambiguous: true,
+          ambiguityReasons: ['customerName'],
+          rows: []
+        }
+      }
+    },
+    '2026-05-01',
+    result
+  );
+
+  assertEquals_(7, context.values['Order Qty'], 'Safe order should write Order Qty when B is ambiguous.');
+  assertEquals_('', context.values['B Qty'], 'Ambiguous B should blank B Qty.');
+  assertContains_(
+    validationRows[0].notes.join('\n'),
+    'B Qty blocked: ambiguous Order+B quantity.',
+    'Ambiguous B should add the short B Qty ambiguity note.'
+  );
 }
 
 function testOutstandingOrdersCanonicalIdentityNotAmbiguous_() {
@@ -1423,7 +1635,7 @@ function testOutstandingOrdersAmbiguousGroupBlocks_() {
     assertEquals_('', outcome.context.values['State'], 'Ambiguous group should not fill State.');
     assertContains_(
       outcome.validationRows[0].notes.join('\n'),
-      'ambiguous Outstanding Orders lines',
+      'B Qty blocked: ambiguous Order+B quantity.',
       'Ambiguous group should add a blocked note.'
     );
     assertEquals_(1, outcome.result.blocked, 'Ambiguous group should count as blocked.');
@@ -1494,7 +1706,7 @@ function testOutstandingOrdersMissingBMatchBlocks_() {
     assertEquals_('', outcome.context.values['State'], 'Missing B match should not fill State.');
     assertContains_(
       outcome.validationRows[0].notes.join('\n'),
-      'no Outstanding Orders line matched',
+      'B Qty blocked: no safe Order+B match.',
       'Missing B match should add a blocked note.'
     );
     assertEquals_(1, outcome.result.blocked, 'Missing B match should count as blocked.');
@@ -2516,6 +2728,8 @@ function testSummarySetupMigratesProductColumns_() {
       'Location',
       'C Number',
       'B Number',
+      'Order Qty',
+      'B Qty',
       'Product Code',
       'Product Description',
       'Vintage',
@@ -2537,6 +2751,8 @@ function testSummarySetupMigratesProductColumns_() {
     });
 
     assertEquals_('B123', sheet.getDataValueByHeader('B Number'), 'B Number data must stay put.');
+    assertEquals_('', sheet.getDataValueByHeader('Order Qty'), 'Inserted Order Qty should be blank.');
+    assertEquals_('', sheet.getDataValueByHeader('B Qty'), 'Inserted B Qty should be blank.');
     assertEquals_('', sheet.getDataValueByHeader('Product Code'), 'Inserted Product Code should be blank.');
     assertEquals_('', sheet.getDataValueByHeader('Product Description'), 'Inserted Product Description should be blank.');
     assertEquals_('', sheet.getDataValueByHeader('Vintage'), 'Inserted Vintage should be blank.');
@@ -2578,6 +2794,8 @@ function testSummarySetupMigratesProductColumns_() {
 
     [
       'Product Code',
+      'Order Qty',
+      'B Qty',
       'Product Description',
       'Vintage',
       'Bottle Size',
@@ -2652,6 +2870,8 @@ function testSummarySetupMigrationIdempotent_() {
   const headers = sheet.getHeaderValues();
 
   [
+    'Order Qty',
+    'B Qty',
     'Product Code',
     'Product Description',
     'Vintage',
@@ -2718,6 +2938,8 @@ function testSummarySetupValidationPlacement_() {
     SummaryService.setupSummaryHeaders_(sheet);
 
     [
+      'Order Qty',
+      'B Qty',
       'Product Code',
       'Product Description',
       'Vintage',
@@ -3142,6 +3364,8 @@ function testEodSummaryContextRequiresLiveHeaders_() {
     'Location',
     'C Number',
     'B Number',
+    'Order Qty',
+    'B Qty',
     'Product Code',
     'Product Description',
     'Vintage',
@@ -3877,6 +4101,59 @@ function testCoordinatorRefreshUsesCurrentRowValues_() {
   );
 }
 
+function testCoordinatorRefreshWritesQuantityCells_() {
+  const headers = SummaryService.getConfiguredSummaryHeaders_();
+  const row = new Array(headers.length).fill('');
+  const rowNumber = Number(CONFIG.summary.headerRow || 2) + 1;
+
+  row[headers.indexOf('_Key')] = TEST_PREFIX + 'REFRESH_QTY';
+  row[headers.indexOf('Scanned At')] = new Date('2026-05-01T09:30:00+10:00');
+  row[headers.indexOf('Order No.')] = '7654321';
+  row[headers.indexOf('B Number')] = 'B1234567';
+
+  const sheet = buildMockMigratableSummarySheet_(headers, [row]);
+  const originalOutstandingLookup = OutstandingOrdersEodReportService.getLookupForDate_;
+  const originalPallet = PalletAndProductByMembersEodReportService.applyToSummaryRows;
+
+  OutstandingOrdersEodReportService.getLookupForDate_ = () => ({
+    byOrderNumber: {
+      7654321: {
+        orderNumber: '7654321',
+        orderTotalQtyOrd: 9,
+        ambiguous: false,
+        bNumbers: {}
+      }
+    },
+    byOrderNumberAndBNumber: {
+      '7654321::B1234567': {
+        orderNumber: '7654321',
+        searchCriteriaBNumber: 'B1234567',
+        owner: 'ABCDE',
+        customerName: 'Example Customer',
+        carrierCode: 'AP',
+        customerState: 'VIC',
+        qtyOrdSum: 4,
+        ambiguous: false,
+        ambiguityReasons: [],
+        rows: []
+      }
+    }
+  });
+
+  PalletAndProductByMembersEodReportService.applyToSummaryRows = () =>
+    PalletAndProductByMembersEodReportService.createResult_();
+
+  try {
+    EodReportCoordinator.refreshSummaryRow(sheet, rowNumber);
+  } finally {
+    OutstandingOrdersEodReportService.getLookupForDate_ = originalOutstandingLookup;
+    PalletAndProductByMembersEodReportService.applyToSummaryRows = originalPallet;
+  }
+
+  assertEquals_(9, sheet.getDataValueByHeader('Order Qty'), 'Manual Refresh EOD should write Order Qty.');
+  assertEquals_(4, sheet.getDataValueByHeader('B Qty'), 'Manual Refresh EOD should write B Qty.');
+}
+
 function testCoordinatorRefreshWritesProductTupleCells_() {
   const sheet = buildProductTupleSummarySheet_();
   const restore = stubCoordinatorProductTupleLookups_();
@@ -3996,7 +4273,14 @@ function testSummaryAppendLiveEodPathWritesProductTupleCells_() {
   });
 
   OutstandingOrdersEodReportService.getLookupForDate_ = () => ({
-    byOrderNumber: {},
+    byOrderNumber: {
+      7654321: {
+        orderNumber: '7654321',
+        orderTotalQtyOrd: 6,
+        ambiguous: false,
+        bNumbers: {}
+      }
+    },
     byOrderNumberAndBNumber: {
       '7654321::B1234567': {
         orderNumber: '7654321',
@@ -4005,7 +4289,7 @@ function testSummaryAppendLiveEodPathWritesProductTupleCells_() {
         customerName: 'Example Customer',
         carrierCode: 'AP',
         customerState: 'VIC',
-        qtyOrdSum: 1,
+        qtyOrdSum: 4,
         ambiguous: false,
         ambiguityReasons: [],
         rows: []
@@ -4053,6 +4337,22 @@ function testSummaryAppendLiveEodPathWritesProductTupleCells_() {
     summarySheet,
     find.rowNumber,
     'Summary append live EOD path should write product tuple cells.'
+  );
+  assertCellDisplayValue_(
+    summarySheet,
+    find.rowNumber,
+    headers,
+    'Order Qty',
+    '6',
+    'Summary append live EOD path should write Order Qty.'
+  );
+  assertCellDisplayValue_(
+    summarySheet,
+    find.rowNumber,
+    headers,
+    'B Qty',
+    '4',
+    'Summary append live EOD path should write B Qty.'
   );
   assertEquals_(false, errorLogged, 'Live EOD path should not log an EOD failure.');
 
@@ -4903,6 +5203,8 @@ function assertSummaryHeaderOrder_(headers) {
     'Location',
     'C Number',
     'B Number',
+    'Order Qty',
+    'B Qty',
     'Product Code',
     'Product Description',
     'Vintage',
@@ -6275,7 +6577,9 @@ function runOutstandingOrdersRowTest_(options) {
     'Customer Name': options.customerName,
     'Carrier': options.carrier,
     'State': options.state,
-    'B Number': options.bNumber || matchBNumber
+    'B Number': options.bNumber || matchBNumber,
+    'Order Qty': '',
+    'B Qty': ''
   });
 
   const validationRows = EodReportValidationService.create(1);
@@ -6298,7 +6602,10 @@ function runOutstandingOrdersRowTest_(options) {
   };
   const orderLookup = {
     orderNumber: match.orderNumber,
-    orderTotalQtyOrd: group.qtyOrdSum,
+    orderTotalQtyOrd: options.orderTotalQtyOrd == null
+      ? group.qtyOrdSum
+      : options.orderTotalQtyOrd,
+    ambiguous: options.orderAmbiguous || false,
     bNumbers: {}
   };
 

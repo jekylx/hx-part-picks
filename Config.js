@@ -154,6 +154,8 @@ const CONFIG = {
       { header: 'Location', source: 'Location', type: 'text' },
       { header: 'C Number', source: 'C Number', type: 'text' },
       { header: 'B Number', source: 'B Number', type: 'text' },
+      { header: 'Order Qty', manual: true, type: 'number' },
+      { header: 'B Qty', manual: true, type: 'number' },
       { header: 'Product Code', manual: true, type: 'text' },
       { header: 'Product Description', manual: true, type: 'text' },
       { header: 'Vintage', manual: true, type: 'text' },
@@ -245,7 +247,9 @@ const CONFIG = {
           orderNumber: 'Order No.',
           customerName: 'Customer Name',
           carrierCode: 'Carrier',
-          customerState: 'State'
+          customerState: 'State',
+          orderQty: 'Order Qty',
+          bQty: 'B Qty'
         }
       }
     }

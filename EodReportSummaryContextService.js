@@ -11,6 +11,8 @@ const EodReportSummaryContextService = {
       'Location',
       'C Number',
       'B Number',
+      'Order Qty',
+      'B Qty',
       'Product Code',
       'Product Description',
       'Vintage',
