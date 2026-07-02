@@ -47,6 +47,28 @@ function runSummaryLocalTests() {
   runLocalTestSuite_('Summary local tests', getLocalTestCases_('summary'));
 }
 
+function runDraftAppendTestsOnly() {
+  runLocalTestSuite_('Draft append local tests', getDraftAppendTestCases_());
+}
+
+function runDraftAppendOrderingTestOnly() {
+  runLocalTestSuite_('Draft append ordering test', [
+    getDraftAppendTestCases_()[0]
+  ]);
+}
+
+function runDraftAppendBlockedNotesTestOnly() {
+  runLocalTestSuite_('Draft append blocked notes test', [
+    getDraftAppendTestCases_()[1]
+  ]);
+}
+
+function runDraftAppendFailureTestOnly() {
+  runLocalTestSuite_('Draft append failure test', [
+    getDraftAppendTestCases_()[2]
+  ]);
+}
+
 function runLocalTestsPart1() {
   runLocalTestSuite_('Local tests part 1', getLocalTestCases_('part1'));
 }
@@ -72,6 +94,26 @@ function runLocalTestSuite_(suiteName, testCases) {
   }
 
   Logger.log(`${suiteName}: all ${results.length} local tests passed.`);
+}
+
+function getDraftAppendTestCases_() {
+  return [
+    {
+      name: 'Summary append enriches drafts before visible append',
+      fn: testSummaryAppendEnrichesDraftsBeforeAppend_,
+      suite: 'summary'
+    },
+    {
+      name: 'Summary append records draft EOD blocks before append',
+      fn: testSummaryAppendDraftBlockedNotes_,
+      suite: 'summary'
+    },
+    {
+      name: 'Summary append continues after one draft enrichment failure',
+      fn: testSummaryAppendContinuesAfterDraftFailure_,
+      suite: 'summary'
+    }
+  ];
 }
 
 function getLocalTestCases_(suite) {
@@ -210,6 +252,9 @@ function getLocalTestCases_(suite) {
     { name: 'Coordinator append enrichment writes product tuple cells and B note', fn: testCoordinatorAppendWritesProductTupleCells_, suite: 'summary' },
     { name: 'Coordinator append enrichment does not overwrite Missing Units', fn: testCoordinatorAppendDoesNotOverwriteMissingUnits_, suite: 'summary' },
     { name: 'Summary SLA formulas write only SLA column', fn: testSummaryApplySlaFormulasWritesOnlySlaColumn_, suite: 'summary' },
+    { name: 'Summary append enriches drafts before visible append', fn: testSummaryAppendEnrichesDraftsBeforeAppend_, suite: 'summary' },
+    { name: 'Summary append records draft EOD blocks before append', fn: testSummaryAppendDraftBlockedNotes_, suite: 'summary' },
+    { name: 'Summary append continues after one draft enrichment failure', fn: testSummaryAppendContinuesAfterDraftFailure_, suite: 'summary' },
     { name: 'Summary append live EOD path writes product tuple cells', fn: testSummaryAppendLiveEodPathWritesProductTupleCells_, suite: 'summary' },
     { name: 'Raw row append keeps raw values', fn: testAppendMockRawRow_, suite: 'summary' },
     { name: 'Summary sync appends existing raw rows', fn: testRepairAppendMissingSummaryRows_, suite: 'summary' },
@@ -4840,6 +4885,165 @@ function testEodLookupAppliedLogSurvivesStaleLogValidation_() {
   assertSummaryProductTupleWritten_(sheet, 'EOD path with logging should still write product tuple cells.');
 }
 
+function testSummaryAppendEnrichesDraftsBeforeAppend_() {
+  ensureLocalTestSetup_();
+
+  const processingKey = TEST_PREFIX + 'DRAFT_BEFORE_APPEND';
+  const ctx = buildMockAppendContext_(processingKey);
+  const summarySheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const originalEnrich = EodReportCoordinator.enrichSummaryDrafts;
+  const originalApply = EodReportCoordinator.applyToSummaryRows;
+  let enrichCalled = false;
+  let sheetWasEmptyDuringEnrich = false;
+  let oldSheetPathCalled = false;
+
+  EodReportCoordinator.enrichSummaryDrafts = drafts => {
+    enrichCalled = true;
+    sheetWasEmptyDuringEnrich =
+      findRowByFirstColumnValue_(summarySheet, processingKey).rowNumber <= 0;
+
+    drafts.forEach(draft => {
+      const productCol = draft.headers.indexOf('Product Code');
+
+      draft.values[productCol] = 'P-DRAFT';
+    });
+
+    return drafts;
+  };
+  EodReportCoordinator.applyToSummaryRows = () => {
+    oldSheetPathCalled = true;
+  };
+
+  try {
+    SheetService.appendPartPickRow(ctx);
+    SummaryService.appendMissingSummaryRows();
+  } finally {
+    EodReportCoordinator.enrichSummaryDrafts = originalEnrich;
+    EodReportCoordinator.applyToSummaryRows = originalApply;
+  }
+
+  const find = findRowByFirstColumnValue_(summarySheet, processingKey);
+  const headers = summarySheet
+    .getRange(CONFIG.summary.headerRow, 1, 1, summarySheet.getLastColumn())
+    .getValues()[0];
+
+  assertEquals_(true, enrichCalled, 'Summary append must call draft enrichment.');
+  assertEquals_(true, sheetWasEmptyDuringEnrich, 'Summary row was visible before draft enrichment completed.');
+  assertEquals_(false, oldSheetPathCalled, 'Summary append must not call sheet-based EOD enrichment.');
+  assertTruthy_(find.rowNumber > 0, 'Summary row was not appended after draft enrichment.');
+  assertCellDisplayValue_(
+    summarySheet,
+    find.rowNumber,
+    headers,
+    'Product Code',
+    'P-DRAFT',
+    'Final appended row should include draft-enriched values.'
+  );
+}
+
+function testSummaryAppendDraftBlockedNotes_() {
+  ensureLocalTestSetup_();
+
+  const processingKey = TEST_PREFIX + 'DRAFT_BLOCKED_NOTES';
+  const ctx = buildMockAppendContext_(processingKey);
+  const originalOutstandingLookup = OutstandingOrdersEodReportService.getLookupForDate_;
+  const originalPalletLookup = PalletAndProductByMembersEodReportService.getLookupForDate_;
+  const originalLogInfo = LogService.info;
+  const originalLogError = LogService.error;
+
+  OutstandingOrdersEodReportService.getLookupForDate_ = () => null;
+  PalletAndProductByMembersEodReportService.getLookupForDate_ = () => null;
+  LogService.info = () => {};
+  LogService.error = () => {};
+
+  try {
+    SheetService.appendPartPickRow(ctx);
+    SummaryService.appendMissingSummaryRows();
+  } finally {
+    OutstandingOrdersEodReportService.getLookupForDate_ = originalOutstandingLookup;
+    PalletAndProductByMembersEodReportService.getLookupForDate_ = originalPalletLookup;
+    LogService.info = originalLogInfo;
+    LogService.error = originalLogError;
+  }
+
+  const summarySheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const find = findRowByFirstColumnValue_(summarySheet, processingKey);
+  const headers = summarySheet
+    .getRange(CONFIG.summary.headerRow, 1, 1, summarySheet.getLastColumn())
+    .getValues()[0];
+  const validationCol = getColumnIndex_(headers, CONFIG.eodReports.validation.summaryColumn);
+  const validationRange = summarySheet.getRange(find.rowNumber, validationCol);
+
+  assertTruthy_(find.rowNumber > 0, 'Summary row should append even when EOD reports are missing.');
+  assertContains_(
+    validationRange.getNote(),
+    'no report found',
+    'Draft EOD no-match note should be written during final append.'
+  );
+  assertEquals_(
+    CONFIG.eodReports.validation.colours.noMatch,
+    validationRange.getBackgrounds()[0][0],
+    'Draft EOD no-match colour should be written during final append.'
+  );
+}
+
+function testSummaryAppendContinuesAfterDraftFailure_() {
+  ensureLocalTestSetup_();
+
+  const firstKey = TEST_PREFIX + 'DRAFT_FAILURE_ONE';
+  const secondKey = TEST_PREFIX + 'DRAFT_FAILURE_TWO';
+  const summarySheet = SheetService.getSheet_(CONFIG.summary.sheetName);
+  const originalApplyDrafts = EodReportCoordinator.applyToSummaryDrafts_;
+  const originalLogError = LogService.error;
+  let attempts = 0;
+
+  EodReportCoordinator.applyToSummaryDrafts_ = drafts => {
+    attempts++;
+
+    if (attempts === 1) {
+      throw new Error('forced draft failure');
+    }
+
+    const draft = drafts[0];
+    const productCol = draft.headers.indexOf('Product Code');
+
+    draft.values[productCol] = 'P-SECOND';
+  };
+  LogService.error = () => {};
+
+  try {
+    SheetService.appendPartPickRow(buildMockAppendContext_(firstKey));
+    SheetService.appendPartPickRow(buildMockAppendContext_(secondKey));
+    SummaryService.appendMissingSummaryRows();
+  } finally {
+    EodReportCoordinator.applyToSummaryDrafts_ = originalApplyDrafts;
+    LogService.error = originalLogError;
+  }
+
+  const firstFind = findRowByFirstColumnValue_(summarySheet, firstKey);
+  const secondFind = findRowByFirstColumnValue_(summarySheet, secondKey);
+  const headers = summarySheet
+    .getRange(CONFIG.summary.headerRow, 1, 1, summarySheet.getLastColumn())
+    .getValues()[0];
+  const validationCol = getColumnIndex_(headers, CONFIG.eodReports.validation.summaryColumn);
+
+  assertTruthy_(firstFind.rowNumber > 0, 'Failed draft should still append with validation note.');
+  assertTruthy_(secondFind.rowNumber > 0, 'A failed draft must not block later drafts.');
+  assertContains_(
+    summarySheet.getRange(firstFind.rowNumber, validationCol).getNote(),
+    'forced draft failure',
+    'Failed draft should capture enrichment failure before append.'
+  );
+  assertCellDisplayValue_(
+    summarySheet,
+    secondFind.rowNumber,
+    headers,
+    'Product Code',
+    'P-SECOND',
+    'Later draft should append with its enriched value.'
+  );
+}
+
 function testSummaryAppendLiveEodPathWritesProductTupleCells_() {
   ensureLocalTestSetup_();
 
@@ -5412,14 +5616,14 @@ function testSummaryAppendPreservesTimestampValueAndFormat_() {
 }
 
 function withEodAppendStub_(callback) {
-  const originalApply = EodReportCoordinator.applyToSummaryRows;
+  const originalEnrich = EodReportCoordinator.enrichSummaryDrafts;
 
-  EodReportCoordinator.applyToSummaryRows = () => {};
+  EodReportCoordinator.enrichSummaryDrafts = drafts => drafts || [];
 
   try {
     return callback();
   } finally {
-    EodReportCoordinator.applyToSummaryRows = originalApply;
+    EodReportCoordinator.enrichSummaryDrafts = originalEnrich;
   }
 }
 
@@ -7452,6 +7656,7 @@ function runTest_(name, fn, results) {
   const startedAt = new Date();
 
   try {
+    Logger.log(`START: ${name}`);
     fn();
 
     results.push({

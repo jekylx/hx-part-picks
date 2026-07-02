@@ -1,8 +1,8 @@
 const SummaryService = {
   appendMissingSummaryRows() {
     // Summary is append-only. Existing summary rows may contain manual edits,
-    // so this flow only adds rows for raw Processing Keys that are not already
-    // present and then enriches those newly appended rows.
+    // so this flow only builds drafts for raw Processing Keys that are not
+    // already present and enriches them before the final append.
     const stats = this.createAppendStats_();
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const rawSheet = ss.getSheetByName(CONFIG.sheets.extractedSheetName);
@@ -36,7 +36,8 @@ const SummaryService = {
     const existingSummaryKeys = this.getExistingSummaryKeys_(summarySheet);
     stats.existingSummaryKeysFound = existingSummaryKeys.size;
 
-    const rowsToAppend = [];
+    const headers = this.getSheetHeaders_(summarySheet);
+    const draftsToAppend = [];
 
     rawRows.forEach((rawRow, index) => {
       const raw = this.rowToObject_(rawHeaders, rawRow);
@@ -54,30 +55,25 @@ const SummaryService = {
         return;
       }
 
-      rowsToAppend.push(this.buildSummaryRow_(raw, summaryKey));
+      draftsToAppend.push(this.buildSummaryDraftFromRaw_(headers, raw, summaryKey));
     });
 
-    if (rowsToAppend.length > 0) {
+    if (draftsToAppend.length > 0) {
+      const enrichedDrafts =
+        EodReportCoordinator.enrichSummaryDrafts(draftsToAppend) || draftsToAppend;
       const startRow = this.getNextSummaryAppendRow_(summarySheet);
-      const headers = this.getSheetHeaders_(summarySheet);
 
-      this.writeAppendSummaryRows_(
+      this.appendFinalSummaryDrafts_(
         summarySheet,
         startRow,
         headers,
-        rowsToAppend
+        enrichedDrafts
       );
 
-      this.applySlaFormulas_(summarySheet, startRow, rowsToAppend.length);
-
-      EodReportCoordinator.applyToSummaryRows(
-        summarySheet,
-        startRow,
-        rowsToAppend.length
-      );
+      this.applySlaFormulas_(summarySheet, startRow, enrichedDrafts.length);
     }
 
-    stats.missingRowsAppended = rowsToAppend.length;
+    stats.missingRowsAppended = draftsToAppend.length;
 
     this.formatSummary_(summarySheet);
 
@@ -320,6 +316,48 @@ const SummaryService = {
     return row;
   },
 
+  buildSummaryDraftFromRaw_(headers, raw, summaryKey) {
+    const configuredHeaders = this.getConfiguredSummaryHeaders_();
+    const configuredRow = this.buildSummaryRow_(raw, summaryKey);
+    const values = headers.map(header => {
+      const configuredIndex = configuredHeaders.indexOf(header);
+
+      return configuredIndex >= 0 ? configuredRow[configuredIndex] : '';
+    });
+
+    return {
+      summaryKey,
+      headers: headers.slice(),
+      values,
+      notes: headers.map(() => ''),
+      backgrounds: headers.map(() => '')
+    };
+  },
+
+  appendFinalSummaryDrafts_(sheet, startRow, headers, drafts) {
+    if (!drafts || drafts.length === 0) {
+      return;
+    }
+
+    this.ensureSummaryAppendCapacity_(
+      sheet,
+      startRow,
+      drafts.length,
+      headers.length
+    );
+
+    const rowsToAppend = drafts.map(draft => draft.values);
+
+    this.writeFinalSummaryRows_(
+      sheet,
+      startRow,
+      headers,
+      rowsToAppend
+    );
+
+    this.writeDraftNotesAndBackgrounds_(sheet, startRow, headers, drafts);
+  },
+
   getSummaryValue_(raw, column) {
     const value = raw[column.source];
 
@@ -340,12 +378,12 @@ const SummaryService = {
     return NormalisationService.normalizeSummaryValue(field.key, value);
   },
 
-  writeAppendSummaryRows_(sheet, startRow, headers, rowsToAppend) {
+  writeFinalSummaryRows_(sheet, startRow, headers, rowsToAppend) {
     if (!rowsToAppend || rowsToAppend.length === 0) {
       return;
     }
 
-    const writableColumns = this.getAppendWritableColumns_(
+    const writableColumns = this.getFinalAppendWritableColumns_(
       headers,
       rowsToAppend[0].length
     );
@@ -384,28 +422,70 @@ const SummaryService = {
     });
   },
 
-  getAppendWritableColumns_(headers, rowWidth) {
-    const configuredByHeader = {};
+  writeDraftNotesAndBackgrounds_(sheet, startRow, headers, drafts) {
+    headers.forEach((header, index) => {
+      const notes = drafts.map(draft => [draft.notes[index] || '']);
+      const backgrounds = drafts.map(draft => [draft.backgrounds[index] || '']);
+      const shouldWriteNotes = notes.some(row => row[0]);
+      const shouldWriteBackgrounds = backgrounds.some(row => row[0]);
 
-    CONFIG.summary.columns.forEach(column => {
-      configuredByHeader[column.header] = column;
+      if (!shouldWriteNotes && !shouldWriteBackgrounds) {
+        return;
+      }
+
+      const range = sheet.getRange(startRow, index + 1, drafts.length, 1);
+
+      if (shouldWriteNotes) {
+        range.setNotes(notes);
+      }
+
+      if (shouldWriteBackgrounds) {
+        range.setBackgrounds(backgrounds);
+      }
+    });
+  },
+
+  ensureSummaryAppendCapacity_(sheet, startRow, rowCount, columnCount) {
+    const requiredRows = startRow + rowCount - 1;
+
+    if (
+      typeof sheet.getMaxRows === 'function' &&
+      typeof sheet.insertRowsAfter === 'function' &&
+      sheet.getMaxRows() < requiredRows
+    ) {
+      sheet.insertRowsAfter(sheet.getMaxRows(), requiredRows - sheet.getMaxRows());
+    }
+
+    if (
+      typeof sheet.getMaxColumns === 'function' &&
+      typeof sheet.insertColumnsAfter === 'function' &&
+      sheet.getMaxColumns() < columnCount
+    ) {
+      sheet.insertColumnsAfter(
+        sheet.getMaxColumns(),
+        columnCount - sheet.getMaxColumns()
+      );
+    }
+  },
+
+  getFinalAppendWritableColumns_(headers, rowWidth) {
+    const blockedHeaders = {};
+
+    [
+      'Date Completed',
+      'SLA',
+      this.getRefreshEodHeader_(),
+      this.getSendEmailHeader_(),
+      'Notes'
+    ].forEach(header => {
+      blockedHeaders[header] = true;
     });
 
     return headers
       .map((header, index) => {
         const col = index + 1;
 
-        if (col > rowWidth) {
-          return 0;
-        }
-
-        if (header === '_Key') {
-          return col;
-        }
-
-        const column = configuredByHeader[header];
-
-        if (!column || column.manual === true || column.type === 'sla') {
+        if (col > rowWidth || blockedHeaders[header]) {
           return 0;
         }
 
