@@ -80,6 +80,7 @@ function getLocalTestCases_(suite) {
     { name: 'Summary config has Email checkbox at end', fn: testSummaryEmailConfig_, suite: 'core' },
     { name: 'Gmail query is correct', fn: testGmailQuery_, suite: 'core' },
     { name: 'B number OCR normalisation handles leading B misreads', fn: testBNumberOcrNormalisation_, suite: 'core' },
+    { name: 'B and C candidate generation handles OCR formats', fn: testCandidateGeneration_, suite: 'core' },
     { name: 'Order number normalisation accepts variable length', fn: testOrderNumberNormalisation_, suite: 'core' },
     { name: 'Outstanding Orders order parsing accepts variable length', fn: testOutstandingOrdersOrderParsing_, suite: 'eod' },
     { name: 'Outstanding Orders Search Criteria B parsing works', fn: testOutstandingOrdersSearchCriteriaBParsing_, suite: 'eod' },
@@ -110,6 +111,7 @@ function getLocalTestCases_(suite) {
     { name: 'Outstanding Orders guards carrier and state corrections', fn: testOutstandingOrdersCarrierStateGuards_, suite: 'eod' },
     { name: 'Outstanding Orders groups by Order and Search Criteria B Number', fn: testOutstandingOrdersGroupsByOrderAndBNumber_, suite: 'eod' },
     { name: 'Outstanding Orders summary row matches correct Order+B line', fn: testOutstandingOrdersSummaryMatchesCorrectOrderBLine_, suite: 'eod' },
+    { name: 'Outstanding Orders accepts only EOD-confirmed B candidates', fn: testOutstandingOrdersAcceptsConfirmedBNumberCandidate_, suite: 'eod' },
     { name: 'Outstanding Orders writes Order Qty and matched B Qty', fn: testOutstandingOrdersWritesMatchedQuantities_, suite: 'eod' },
     { name: 'Outstanding Orders repeated same-B rows sum quantity', fn: testOutstandingOrdersRepeatedSameBQty_, suite: 'eod' },
     { name: 'Outstanding Orders blocks quantity fields safely', fn: testOutstandingOrdersQuantityBlocks_, suite: 'eod' },
@@ -120,6 +122,7 @@ function getLocalTestCases_(suite) {
     { name: 'Outstanding Orders does not fill from another same-order line', fn: testOutstandingOrdersDoesNotFillFromSameOrderOtherB_, suite: 'eod' },
     { name: 'Pallet/Product exact C+B match sets Location', fn: testPalletProductExactMatchSetsLocation_, suite: 'eod' },
     { name: 'Pallet/Product exact C+B match fills Member', fn: testPalletProductExactMatchFillsMember_, suite: 'eod' },
+    { name: 'Pallet/Product exact match accepts confirmed C/B candidates', fn: testPalletProductExactMatchAcceptsConfirmedCandidates_, suite: 'eod' },
     { name: 'Pallet/Product B owner match corrects C and Location', fn: testPalletProductBMatchOwnerGateCorrects_, suite: 'eod' },
     { name: 'Pallet/Product B owner mismatch blocks C and Location correction', fn: testPalletProductBMatchOwnerMismatchBlocks_, suite: 'eod' },
     { name: 'Pallet/Product missing owner blocks B correction', fn: testPalletProductBMatchMissingOwnerBlocks_, suite: 'eod' },
@@ -470,8 +473,6 @@ function testOrderNumberNormalisation_() {
 
 function testBNumberOcrNormalisation_() {
   [
-    ['80867173', 'B0867173'],
-    ['50867173', 'B0867173'],
     ['B0867173', 'B0867173'],
     ['0867173', 'B0867173']
   ].forEach(pair => {
@@ -483,9 +484,47 @@ function testBNumberOcrNormalisation_() {
   });
 
   assertEquals_(
-    '12345678',
-    NormalisationService.normalizeSummaryValue('b_code', '12345678'),
-    'Unrelated eight digit values must not be blindly accepted as B Numbers.'
+    '80867173',
+    NormalisationService.normalizeSummaryValue('b_code', '80867173'),
+    'Eight digit OCR candidates must not be blindly accepted as Summary B Numbers.'
+  );
+}
+
+function testCandidateGeneration_() {
+  assertArrayEquals_(
+    ['B0991354'],
+    NormalisationService.getBNumberCandidates('B9 B0991354'),
+    'B candidate generation should recover the embedded seven digit B value.'
+  );
+
+  assertArrayEquals_(
+    ['B0867173'],
+    NormalisationService.getBNumberCandidates('80867173'),
+    'B candidate generation should recover leading B misreads.'
+  );
+
+  assertArrayEquals_(
+    ['B0940416'],
+    NormalisationService.getBNumberCandidates('BO 940416'),
+    'B candidate generation should map OCR O to zero.'
+  );
+
+  assertArrayEquals_(
+    ['393000010000514066'],
+    NormalisationService.getCartonNumberCandidates('393-1-514066'),
+    'C candidate generation should expand shortened 393 values.'
+  );
+
+  assertArrayEquals_(
+    ['C1741875'],
+    NormalisationService.getCartonNumberCandidates('C17 41 875'),
+    'C candidate generation should keep C plus seven digits.'
+  );
+
+  assertArrayEquals_(
+    ['393000010000562500'],
+    NormalisationService.getCartonNumberCandidates('893-1-562500'),
+    'C candidate generation should recover 393 when OCR reads leading 3 as 8.'
   );
 }
 
@@ -1399,6 +1438,52 @@ function testOutstandingOrdersSummaryMatchesCorrectOrderBLine_() {
   }
 }
 
+function testOutstandingOrdersAcceptsConfirmedBNumberCandidate_() {
+  const context = buildMockOutstandingOrdersContext_({
+    'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
+    'Owner': '',
+    'Order No.': '1400001',
+    'Customer Name': 'Old Customer',
+    'Carrier': '',
+    'State': '',
+    'B Number': '80867173',
+    'Order Qty': '',
+    'B Qty': ''
+  });
+  const validationRows = EodReportValidationService.create(1);
+  const result = OutstandingOrdersEodReportService.createResult_();
+  const lookup = OutstandingOrdersEodReportService.buildLookup_(
+    buildMockOutstandingOrdersReport_([
+      buildOutstandingOrdersCsvRow_({
+        orderNo: 'TESTA1400001',
+        customerName: 'Right B Customer',
+        carrierCode: 'NXM',
+        customerState: 'VIC',
+        searchCriteria: 'BB&V1990&OB0867173',
+        qtyOrd: '3'
+      })
+    ])
+  );
+
+  OutstandingOrdersEodReportService.applyRow_(
+    context,
+    validationRows,
+    0,
+    lookup,
+    '2026-05-01',
+    result
+  );
+
+  assertEquals_('B0867173', context.values['B Number'], 'Confirmed B candidate should be written to Summary.');
+  assertEquals_(3, context.values['B Qty'], 'Confirmed B candidate should write matched B Qty.');
+  assertEquals_('Right B Customer', context.values['Customer Name'], 'Confirmed B candidate should select the matching order line.');
+  assertContains_(
+    validationRows[0].notes.join('\n'),
+    'corrected B Number from Order+B candidate',
+    'Confirmed B candidate should add an audit note.'
+  );
+}
+
 function testOutstandingOrdersWritesMatchedQuantities_() {
   const context = buildMockOutstandingOrdersContext_({
     'Scanned At': new Date('2026-05-01T09:30:00+10:00'),
@@ -1902,6 +1987,39 @@ function testPalletProductExactMatchFillsMember_() {
   });
 
   assertEquals_('M001', outcome.context.values['Member'], 'Exact C+B match should fill Member through B+Owner.');
+}
+
+function testPalletProductExactMatchAcceptsConfirmedCandidates_() {
+  const outcome = runPalletProductRowTest_({
+    values: {
+      'Owner': 'ABCDE',
+      'Location': 'OLD-LOC',
+      'C Number': '893-1-562500',
+      'B Number': '80867173'
+    },
+    records: [
+      buildPalletProductRecord_({
+        location: '1C20C4',
+        cNumber: '393000010000562500',
+        bNumber: 'B0867173',
+        owner: 'ABCDE',
+        memberNo: 'M001'
+      })
+    ]
+  });
+
+  assertEquals_(
+    '393000010000562500',
+    outcome.context.values['C Number'],
+    'Confirmed C candidate should be written to Summary.'
+  );
+  assertEquals_(
+    'B0867173',
+    outcome.context.values['B Number'],
+    'Confirmed B candidate should be written to Summary.'
+  );
+  assertEquals_('1C20C4', outcome.context.values['Location'], 'Confirmed C+B candidates should set Location.');
+  assertEquals_('M001', outcome.context.values['Member'], 'Confirmed B+Owner candidate should fill Member.');
 }
 
 function testPalletProductBMatchOwnerGateCorrects_() {
@@ -7405,6 +7523,15 @@ function assertTruthy_(value, message) {
 function assertEquals_(expected, actual, message) {
   if (expected !== actual) {
     throw new Error(`${message} Expected "${expected}", got "${actual}".`);
+  }
+}
+
+function assertArrayEquals_(expected, actual, message) {
+  const expectedText = JSON.stringify(expected);
+  const actualText = JSON.stringify(actual);
+
+  if (expectedText !== actualText) {
+    throw new Error(`${message} Expected ${expectedText}, got ${actualText}.`);
   }
 }
 

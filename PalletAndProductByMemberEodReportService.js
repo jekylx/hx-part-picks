@@ -42,10 +42,12 @@ const PalletAndProductByMembersEodReportService = {
       context.value(summaryColumns.owner, rowIndex)
     );
 
-    const cNumber = EodReportNormalisationService.normalizeCNumber(beforeCNumber);
-    const bNumber = EodReportNormalisationService.normalizeBNumber(beforeBNumber);
+    const cCandidates = EodReportNormalisationService.getCNumberCandidates(beforeCNumber);
+    const bCandidates = EodReportNormalisationService.getBNumberCandidates(beforeBNumber);
+    let cNumber = cCandidates.length === 1 ? cCandidates[0] : '';
+    let bNumber = bCandidates.length === 1 ? bCandidates[0] : '';
 
-    if (!cNumber && !bNumber) {
+    if (cCandidates.length === 0 && bCandidates.length === 0) {
       EodReportValidationService.noMatch(
         validationRows,
         rowIndex,
@@ -71,13 +73,27 @@ const PalletAndProductByMembersEodReportService = {
       return;
     }
 
-    const exactMatch =
-      cNumber && bNumber
-        ? lookup.byPair[EodReportNormalisationService.pairKey(cNumber, bNumber)]
-        : null;
+    const exactSelection = this.selectExactPairMatch_(lookup, cCandidates, bCandidates);
+    const exactMatch = exactSelection.match;
 
     if (exactMatch) {
       let changed = false;
+      cNumber = exactSelection.cNumber;
+      bNumber = exactSelection.bNumber;
+
+      changed = this.setContextValueIfChanged_(
+        context,
+        summaryColumns.cNumber,
+        rowIndex,
+        cNumber
+      ) || changed;
+
+      changed = this.setContextValueIfChanged_(
+        context,
+        summaryColumns.bNumber,
+        rowIndex,
+        bNumber
+      ) || changed;
 
       changed = this.setContextValueIfChanged_(
         context,
@@ -102,13 +118,19 @@ const PalletAndProductByMembersEodReportService = {
       return;
     }
 
-    const cMatches = cNumber ? lookup.byCNumber[cNumber] || [] : [];
-    const bMatches = bNumber ? lookup.byBNumber[bNumber] || [] : [];
+    const cMatches = this.getMatchesForCandidates_(lookup.byCNumber, cCandidates);
+    const bMatches = this.getMatchesForCandidates_(lookup.byBNumber, bCandidates);
     const uniqueCMatch = this.getUniquePalletMatch_(cMatches);
-    const ownerScopedBMatches = this.getBNumberMatchesForOwner_(lookup, bNumber, owner);
+    const ownerScopedBSelection = this.getBNumberMatchesForOwnerCandidates_(
+      lookup,
+      bCandidates,
+      owner
+    );
+    const ownerScopedBMatches = ownerScopedBSelection.matches;
     const uniqueBMatch = this.getUniquePalletMatchForBNumberAndOwner_(
       ownerScopedBMatches
     );
+    bNumber = ownerScopedBSelection.bNumber || bNumber;
 
     if (uniqueBMatch && uniqueBMatch.cNumber && uniqueBMatch.cNumber !== cNumber) {
       const bCorrectionGate = this.getBNumberCorrectionGate_(
@@ -118,6 +140,12 @@ const PalletAndProductByMembersEodReportService = {
       );
 
       if (bCorrectionGate.allowed) {
+        this.setContextValueIfChanged_(
+          context,
+          summaryColumns.bNumber,
+          rowIndex,
+          bNumber
+        );
         this.setContextValueIfChanged_(
           context,
           summaryColumns.cNumber,
@@ -405,6 +433,82 @@ const PalletAndProductByMembersEodReportService = {
 
     context.setNote(headerName, rowIndex, value);
     return true;
+  },
+
+  selectExactPairMatch_(lookup, cCandidates, bCandidates) {
+    const matches = [];
+
+    cCandidates.forEach(cNumber => {
+      bCandidates.forEach(bNumber => {
+        const match = lookup.byPair[
+          EodReportNormalisationService.pairKey(cNumber, bNumber)
+        ];
+
+        if (match) {
+          matches.push({
+            cNumber,
+            bNumber,
+            match
+          });
+        }
+      });
+    });
+
+    return matches.length === 1
+      ? matches[0]
+      : { cNumber: '', bNumber: '', match: null };
+  },
+
+  getMatchesForCandidates_(lookup, candidates) {
+    const unique = {};
+    const matches = [];
+
+    (candidates || []).forEach(candidate => {
+      (lookup[candidate] || []).forEach(match => {
+        const key = [
+          match.reportRow || '',
+          match.cNumber || '',
+          match.bNumber || '',
+          match.owner || '',
+          match.location || ''
+        ].join('::');
+
+        if (unique[key]) {
+          return;
+        }
+
+        unique[key] = true;
+        matches.push(match);
+      });
+    });
+
+    return matches;
+  },
+
+  getBNumberMatchesForOwnerCandidates_(lookup, bCandidates, owner) {
+    const selections = [];
+
+    (bCandidates || []).forEach(bNumber => {
+      const matches = this.getBNumberMatchesForOwner_(lookup, bNumber, owner);
+
+      if (matches.length > 0) {
+        selections.push({
+          bNumber,
+          matches
+        });
+      }
+    });
+
+    if (selections.length === 1) {
+      return selections[0];
+    }
+
+    return {
+      bNumber: '',
+      matches: selections.length === 0 ? [] : selections.reduce((all, selection) =>
+        all.concat(selection.matches),
+      [])
+    };
   },
 
   getLookupForDate_(dateKey) {

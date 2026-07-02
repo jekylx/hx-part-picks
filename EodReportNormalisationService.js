@@ -11,8 +11,34 @@ const EodReportNormalisationService = {
     return this.normalizeSummaryFieldValue('b_code', value);
   },
 
+  getBNumberCandidates(value) {
+    if (
+      typeof NormalisationService !== 'undefined' &&
+      typeof NormalisationService.getBNumberCandidates === 'function'
+    ) {
+      return NormalisationService.getBNumberCandidates(value);
+    }
+
+    const normalized = this.normalizeBNumber(value);
+
+    return normalized ? [normalized] : [];
+  },
+
   normalizeCNumber(value) {
     return this.normalizeSummaryFieldValue('carton_number', value);
+  },
+
+  getCNumberCandidates(value) {
+    if (
+      typeof NormalisationService !== 'undefined' &&
+      typeof NormalisationService.getCartonNumberCandidates === 'function'
+    ) {
+      return NormalisationService.getCartonNumberCandidates(value);
+    }
+
+    const normalized = this.normalizeCNumber(value);
+
+    return normalized ? [normalized] : [];
   },
 
   normalizeSummaryOrderNumber(value) {

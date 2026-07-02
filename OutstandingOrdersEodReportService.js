@@ -44,7 +44,6 @@ const OutstandingOrdersEodReportService = {
     const beforeState = context.value(summaryColumns.customerState, rowIndex);
     const orderNumber = EodReportNormalisationService.normalizeSummaryOrderNumber(beforeOrderNumber);
     const beforeBNumber = context.value(palletConfig.summaryColumns.bNumber, rowIndex);
-    const bNumber = EodReportNormalisationService.normalizeBNumber(beforeBNumber);
 
     if (!orderNumber) {
       this.clearQuantityFields_(context, rowIndex);
@@ -85,30 +84,27 @@ const OutstandingOrdersEodReportService = {
 
     context.setValue(summaryColumns.orderQty, rowIndex, orderLookup.orderTotalQtyOrd);
 
-    if (!/^B\d{7}$/.test(bNumber)) {
+    const bSelection = this.selectOrderBNumberMatch_(
+      lookup,
+      orderNumber,
+      beforeBNumber
+    );
+
+    if (bSelection.status !== 'ok') {
       context.setValue(summaryColumns.bQty, rowIndex, '');
       EodReportValidationService.noMatch(
         validationRows,
         rowIndex,
-        'B Qty blocked: no safe Order+B match.'
+        bSelection.status === 'ambiguous'
+          ? 'B Qty blocked: ambiguous Order+B candidate.'
+          : 'B Qty blocked: no safe Order+B match.'
       );
       result.blocked++;
       return;
     }
 
-    const matchKey = this.orderBNumberKey_(orderNumber, bNumber);
-    const match = lookup.byOrderNumberAndBNumber[matchKey];
-
-    if (!match) {
-      context.setValue(summaryColumns.bQty, rowIndex, '');
-      EodReportValidationService.noMatch(
-        validationRows,
-        rowIndex,
-        'B Qty blocked: no safe Order+B match.'
-      );
-      result.blocked++;
-      return;
-    }
+    const bNumber = bSelection.bNumber;
+    const match = bSelection.match;
 
     if (match.ambiguous) {
       context.setValue(summaryColumns.bQty, rowIndex, '');
@@ -119,6 +115,20 @@ const OutstandingOrdersEodReportService = {
       );
       result.blocked++;
       return;
+    }
+
+    if (beforeBNumber !== bNumber) {
+      context.setValue(palletConfig.summaryColumns.bNumber, rowIndex, bNumber);
+      EodReportValidationService.corrected(
+        validationRows,
+        rowIndex,
+        [
+          `${reportConfig.displayName}: corrected B Number from Order+B candidate.`,
+          `Before: ${EodReportNormalisationService.displayValue(beforeBNumber)}`,
+          `After: ${EodReportNormalisationService.displayValue(bNumber)}`
+        ].join('\n')
+      );
+      result.corrected++;
     }
 
     context.setValue(summaryColumns.bQty, rowIndex, match.qtyOrdSum);
@@ -180,6 +190,38 @@ const OutstandingOrdersEodReportService = {
     }
 
     result.filled++;
+  },
+
+  selectOrderBNumberMatch_(lookup, orderNumber, rawBNumber) {
+    const candidates = EodReportNormalisationService.getBNumberCandidates(rawBNumber);
+    const matches = [];
+
+    candidates.forEach(candidate => {
+      const match = lookup.byOrderNumberAndBNumber[
+        this.orderBNumberKey_(orderNumber, candidate)
+      ];
+
+      if (match) {
+        matches.push({
+          bNumber: candidate,
+          match
+        });
+      }
+    });
+
+    if (matches.length === 1) {
+      return {
+        status: 'ok',
+        bNumber: matches[0].bNumber,
+        match: matches[0].match
+      };
+    }
+
+    return {
+      status: matches.length > 1 ? 'ambiguous' : 'missing',
+      bNumber: '',
+      match: null
+    };
   },
 
   applyCustomerNameCorrection_(context, validationRows, rowIndex, dateKey, match, beforeCustomerName, result) {
