@@ -4686,6 +4686,23 @@ function testSummaryAppendLiveEodPathWritesProductTupleCells_() {
     '2',
     'Summary append live EOD path should not let EOD overwrite Missing Units.'
   );
+  assertCellDisplayValue_(
+    summarySheet,
+    find.rowNumber,
+    headers,
+    'Date Completed',
+    '',
+    'Summary append live EOD path must not write Date Completed.'
+  );
+
+  const slaCol = getColumnIndex_(headers, 'SLA');
+
+  assertTruthy_(slaCol > 0, 'SLA column missing.');
+  assertContains_(
+    summarySheet.getRange(find.rowNumber, slaCol).getFormula(),
+    '=IF(',
+    'Summary append live EOD path should apply SLA formula.'
+  );
   assertEquals_(false, errorLogged, 'Live EOD path should not log an EOD failure.');
 
   const appliedLog = logs.find(log => log.status === 'EOD_REPORT_LOOKUP_APPLIED');

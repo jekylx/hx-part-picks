@@ -59,10 +59,14 @@ const SummaryService = {
 
     if (rowsToAppend.length > 0) {
       const startRow = this.getNextSummaryAppendRow_(summarySheet);
+      const headers = this.getSheetHeaders_(summarySheet);
 
-      summarySheet
-        .getRange(startRow, 1, rowsToAppend.length, rowsToAppend[0].length)
-        .setValues(rowsToAppend);
+      this.writeAppendSummaryRows_(
+        summarySheet,
+        startRow,
+        headers,
+        rowsToAppend
+      );
 
       this.applySlaFormulas_(summarySheet, startRow, rowsToAppend.length);
 
@@ -334,6 +338,80 @@ const SummaryService = {
     }
 
     return NormalisationService.normalizeSummaryValue(field.key, value);
+  },
+
+  writeAppendSummaryRows_(sheet, startRow, headers, rowsToAppend) {
+    if (!rowsToAppend || rowsToAppend.length === 0) {
+      return;
+    }
+
+    const writableColumns = this.getAppendWritableColumns_(
+      headers,
+      rowsToAppend[0].length
+    );
+    const groups = [];
+
+    writableColumns.forEach(col => {
+      const lastGroup = groups[groups.length - 1];
+
+      if (lastGroup && lastGroup.endCol + 1 === col) {
+        lastGroup.endCol = col;
+        return;
+      }
+
+      groups.push({ startCol: col, endCol: col });
+    });
+
+    groups.forEach(group => {
+      const width = group.endCol - group.startCol + 1;
+      const values = rowsToAppend.map(row =>
+        row.slice(group.startCol - 1, group.endCol)
+      );
+      const range = sheet.getRange(
+        startRow,
+        group.startCol,
+        rowsToAppend.length,
+        width
+      );
+
+      if (typeof range.clearDataValidations === 'function') {
+        range.clearDataValidations();
+      } else {
+        range.setDataValidation(null);
+      }
+
+      range.setValues(values);
+    });
+  },
+
+  getAppendWritableColumns_(headers, rowWidth) {
+    const configuredByHeader = {};
+
+    CONFIG.summary.columns.forEach(column => {
+      configuredByHeader[column.header] = column;
+    });
+
+    return headers
+      .map((header, index) => {
+        const col = index + 1;
+
+        if (col > rowWidth) {
+          return 0;
+        }
+
+        if (header === '_Key') {
+          return col;
+        }
+
+        const column = configuredByHeader[header];
+
+        if (!column || column.manual === true || column.type === 'sla') {
+          return 0;
+        }
+
+        return col;
+      })
+      .filter(col => col > 0);
   },
 
   getExistingSummaryKeys_(sheet) {
