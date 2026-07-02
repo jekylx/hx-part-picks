@@ -1,0 +1,320 @@
+/**
+ * EmailProcessorService.js
+ *
+ * Printer email ingestion flow (invoked via processPrinterEmails in Code.js).
+ *
+ * Critical rules preserved here:
+ * - Gmail labels are visibility markers only; processed keys are the dedupe
+ *   source of truth (DedupeService).
+ * - Batch PDFs dedupe on BATCH::<md5> before split; pages dedupe on
+ *   BATCH::<md5>::PAGE-<n> after split.
+ * - Gemini extraction is advisory: failures still create a blank review row.
+ * - A page succeeds when the PDF is archived and the raw row is appended.
+ * - Raw Part Picks rows keep raw Gemini output; no normalisation here.
+ */
+
+function processPrinterEmails_(deps) {
+  const services = deps || {};
+  const lockService = services.lockService || LockService;
+  const gmailApp = services.gmailApp || GmailApp;
+  const gmailService = services.gmailService || GmailService;
+  const summaryService = services.summaryService || SummaryService;
+  const threadProcessor = services.threadProcessor || processThread_;
+  const lock = lockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    Logger.log('processPrinterEmails start.');
+
+    // Do not exclude Processed/Failed labels here: the printer keeps appending
+    // later scans as replies to the same daily Gmail thread.
+    const query = gmailService.buildSearchQuery();
+
+    Logger.log(`processPrinterEmails Gmail query: ${query}`);
+
+    const threads = gmailApp.search(query, 0, CONFIG.gmail.maxThreadsPerRun);
+
+    LogService.info(
+      'SEARCH',
+      '',
+      '',
+      `Found ${threads.length} thread(s): ${query}`
+    );
+    Logger.log(`processPrinterEmails found ${threads.length} thread(s).`);
+
+    threads.forEach((thread, index) => {
+      try {
+        const threadId =
+          thread && typeof thread.getId === 'function'
+            ? thread.getId()
+            : `index ${index + 1}`;
+
+        Logger.log(`processPrinterEmails processing thread ${index + 1}/${threads.length}: ${threadId}`);
+        threadProcessor(thread);
+      } catch (err) {
+        LogService.error(
+          'THREAD_FAILED_UNEXPECTED',
+          '',
+          '',
+          err,
+          ''
+        );
+        Logger.log('processPrinterEmails unexpected thread failure.');
+        Logger.log(err && err.stack ? err.stack : String(err));
+      }
+    });
+
+    Logger.log('processPrinterEmails appending missing summary rows.');
+    summaryService.appendMissingSummaryRows();
+    Logger.log('processPrinterEmails appended missing summary rows.');
+  } finally {
+    Logger.log('processPrinterEmails end.');
+    lock.releaseLock();
+  }
+}
+
+function processThread_(thread) {
+  const processedLabel = LabelService.getOrCreateLabel_(CONFIG.gmail.processedLabel);
+  const failedLabel = LabelService.getOrCreateLabel_(CONFIG.gmail.failedLabel);
+
+  let anyCriticalFailure = false;
+  let processedAnyPdf = false;
+  let skippedAnyDuplicate = false;
+
+  thread.getMessages().forEach(message => {
+    const batchPdfs = GmailService.getPdfAttachments(message);
+
+    batchPdfs.forEach(batchPdf => {
+      const batchProcessingKey = buildBatchProcessingKey_(batchPdf);
+
+      // Batch key is a fast pre-split completion marker for this exact original
+      // PDF. Older processed rows may only have page keys, so absence of this
+      // marker does not prove the pages are new.
+      if (DedupeService.hasProcessed(batchProcessingKey)) {
+        skippedAnyDuplicate = true;
+
+        LogService.info(
+          'SKIPPED_DUPLICATE_BATCH',
+          message.getId(),
+          batchPdf.getName(),
+          batchProcessingKey
+        );
+
+        return;
+      }
+
+      const pagePdfs = splitPdfOrFallbackToBatch_(batchPdf, message);
+      let allPagesAccountedFor = true;
+
+      pagePdfs.forEach(pagePdf => {
+        const processingKey = buildPageProcessingKey_(batchPdf, pagePdf);
+
+        // Page keys protect row uniqueness and partial retries after a critical
+        // failure. A single existing page key must never be treated as proof
+        // that the whole batch completed.
+        if (DedupeService.hasProcessed(processingKey)) {
+          skippedAnyDuplicate = true;
+
+          LogService.info(
+            'SKIPPED_DUPLICATE',
+            message.getId(),
+            pagePdf.filename,
+            processingKey
+          );
+
+          return;
+        }
+
+        let archiveFile = null;
+
+        try {
+          archiveFile = DriveService.archivePdf(pagePdf.blob, message);
+
+          const extractionResult = extractFormOrBlank_(pagePdf.blob, message, pagePdf);
+
+          SheetService.appendPartPickRow({
+            message,
+            pdf: pagePdf.blob,
+            archiveFile,
+            form: extractionResult.form,
+            processingKey,
+            extractionStatus: extractionResult.extractionStatus,
+            extractionError: extractionResult.extractionError
+          });
+
+          DedupeService.markProcessed(
+            processingKey,
+            message,
+            batchPdf,
+            archiveFile,
+            extractionResult.extractionStatus === 'AUTO_EXTRACTED' ? 1 : 0
+          );
+
+          LogService.info(
+            'PROCESSED',
+            message.getId(),
+            pagePdf.filename,
+            [
+              'Drive saved and sheet row appended.',
+              `Extraction status: ${extractionResult.extractionStatus}`,
+              `Rotation applied: ${pagePdf.rotationApplied || 0}`
+            ].join(' ')
+          );
+
+          processedAnyPdf = true;
+        } catch (err) {
+          anyCriticalFailure = true;
+          allPagesAccountedFor = false;
+
+          LogService.error(
+            'FAILED_DRIVE_OR_SHEET',
+            message.getId(),
+            pagePdf.filename,
+            err,
+            archiveFile ? archiveFile.getUrl() : ''
+          );
+        }
+      });
+
+      // Only mark the whole batch complete after every page was either already
+      // accounted for or successfully saved to Drive and appended to the sheet.
+      if (allPagesAccountedFor) {
+        DedupeService.markProcessed(
+          batchProcessingKey,
+          message,
+          batchPdf,
+          null,
+          0
+        );
+      }
+    });
+  });
+
+  if (anyCriticalFailure) {
+    thread.addLabel(failedLabel);
+  }
+
+  if ((processedAnyPdf || skippedAnyDuplicate) && !anyCriticalFailure) {
+    thread.addLabel(processedLabel);
+    thread.markRead();
+    // Archive processed threads to keep Inbox clean. Processed labels are not
+    // excluded from search because later printer replies can return the daily
+    // thread to Inbox; batch/page dedupe handles already-seen PDFs/pages.
+    thread.moveToArchive();
+  }
+}
+
+function splitPdfOrFallbackToBatch_(batchPdf, message) {
+  try {
+    // The scanner can merge back-to-back scans into one N-page PDF. The splitter
+    // service returns one portrait-oriented PDF per source page.
+    const pagePdfs = PdfService.splitIntoPortraitPages(batchPdf);
+
+    LogService.info(
+      'SPLIT_BATCH_PDF',
+      message.getId(),
+      batchPdf.getName(),
+      `Split into ${pagePdfs.length} one-page PDF(s).`
+    );
+
+    return pagePdfs;
+  } catch (err) {
+    const errorText = stringifyError_(err);
+
+    // Split failure is non-fatal to ingestion: archive the original batch PDF
+    // and create a review row so the operator still sees the work item.
+    LogService.error(
+      'PDF_SPLIT_FAILED_NON_FATAL',
+      message.getId(),
+      batchPdf.getName(),
+      err,
+      ''
+    );
+
+    return [
+      {
+        pageNumber: 1,
+        filename: batchPdf.getName(),
+        blob: batchPdf,
+        rotationApplied: 0,
+        extractionStatus: 'PDF_SPLIT_FAILED',
+        extractionError: errorText
+      }
+    ];
+  }
+}
+
+function extractFormOrBlank_(pagePdfBlob, message, pagePdf) {
+  if (pagePdf.extractionStatus === 'PDF_SPLIT_FAILED') {
+    return {
+      form: buildBlankForm_('PDF split failed. Original batch PDF was saved instead.'),
+      extractionStatus: 'PDF_SPLIT_FAILED',
+      extractionError: pagePdf.extractionError || ''
+    };
+  }
+
+  try {
+    const extraction = GeminiService.extractPdf(pagePdfBlob);
+    const forms = GeminiService.normalizeForms(extraction);
+
+    if (!forms.length) {
+      throw new Error('Gemini returned no forms for one-page PDF.');
+    }
+
+    if (forms.length > 1) {
+      LogService.info(
+        'MULTIPLE_FORMS_RETURNED_FOR_ONE_PAGE',
+        message.getId(),
+        pagePdf.filename,
+        `Gemini returned ${forms.length} forms for one-page PDF. Using the first form only.`
+      );
+    }
+
+    return {
+      form: forms[0],
+      extractionStatus: 'AUTO_EXTRACTED',
+      extractionError: ''
+    };
+  } catch (err) {
+    const errorText = stringifyError_(err);
+
+    // Extraction is advisory. A blank row that needs review is still a
+    // successful page if Drive save and sheet append complete.
+    LogService.error(
+      'GEMINI_FAILED_NON_FATAL',
+      message.getId(),
+      pagePdf.filename,
+      err,
+      ''
+    );
+
+    return {
+      form: buildBlankForm_('Gemini extraction failed. Manual entry required.'),
+      extractionStatus: 'GEMINI_FAILED',
+      extractionError: errorText
+    };
+  }
+}
+
+function buildBlankForm_(reason) {
+  const form = {};
+
+  CONFIG.fields.forEach(field => {
+    form[field.key] = null;
+  });
+
+  form.needs_review = true;
+  form.review_reasons = [reason || 'Manual entry required.'];
+
+  return form;
+}
+
+function stringifyError_(err) {
+  if (!err) return '';
+
+  if (err.stack) {
+    return String(err.stack);
+  }
+
+  return String(err);
+}

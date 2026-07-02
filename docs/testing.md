@@ -37,15 +37,43 @@ The tests do not read real printer emails or call Gemini extraction.
 The summary email tests do not send real emails and do not read real Drive files; they stub the mail sender, Drive file lookup, and internal email ledger.
 `cleanupTestRows()` removes `TEST::` rows from `Part Picks`, `Part Pick Summary`, and `_Processed Keys` even when a test row was accidentally created far down the sheet.
 
+## Test Module Layout
+
+`TestHarness.js` is now only a compatibility anchor for the old filename. The real suite is split into modules:
+
+- `tests/TestRunner.js`: public runner functions and the central suite registry.
+- `tests/TestAssertions.js`: shared assertions.
+- `tests/TestMocks.js`: fake Spreadsheet/Gmail/Drive/trigger services.
+- `tests/TestFixtures.js`: shared row builders, setup helpers, and fixture data.
+- `tests/config/*.js`: config and prompt rules.
+- `tests/normalisation/*.js`: candidate and safe normalisation behavior.
+- `tests/eod/*.js`: EOD cache, coordinator, Outstanding Orders, and Pallet/Product tests.
+- `tests/summary/*.js`: Summary mapping, draft append, append placement, SLA, and repair sync tests.
+- `tests/refresh/*.js`: Refresh edit routing and queued worker tests.
+- `tests/email/*.js`: Summary email sending and ledger tests.
+- `tests/processor/*.js` and `tests/pdf/*.js`: processor guard rails, processing keys, and PDF health.
+- `tests/setup/*.js`: setup/protection/validation placement/log writer behavior.
+- `tests/oneoff/*.js`: temporary product backfill tests.
+
+## Public Runner Functions
+
+- `runLocalTests()`: full suite.
+- `runLocalTestsPart1()`: core, EOD, and setup/protection tests.
+- `runLocalTestsPart2()`: summary and summary email tests.
+- `runCoreLocalTests()`, `runEodLocalTests()`, `runSheetSetupLocalTests()`, `runSummaryLocalTests()`, `runSummaryEmailLocalTests()`: legacy suite groups.
+- `runNormalisationTestsOnly()`, `runEodTestsOnly()`, `runSummaryTestsOnly()`, `runRefreshWorkerTestsOnly()`, `runEmailTestsOnly()`, `runOneOffTestsOnly()`, `runProcessorTestsOnly()`: focused module groups.
+- `runDraftAppendTestsOnly()`, `runDraftAppendOrderingTestOnly()`, `runDraftAppendBlockedNotesTestOnly()`, `runDraftAppendFailureTestOnly()`: draft append diagnostics.
+
 ## Adding Tests
 
-Add focused tests to `TestHarness.js`:
+Add focused tests to the relevant `tests/<domain>/...Test.js` file:
 
-1. Create a `testSomething_()` function.
-2. Register it in `getLocalTestCases_()` with a test name, function, and suite.
-3. Prefer mock contexts and lookup builders over live Gmail/Drive/Gemini calls.
-4. Use existing assertion helpers.
-5. Keep production data out of tests.
+1. Create a `testSomething_()` function near related tests.
+2. Register it in that file's `get...TestCases_()` function with `name`, `fn`, and `suite`.
+3. Add a new domain file only when the behavior does not fit an existing registry.
+4. Wire a new registry into `tests/TestRunner.js` only once.
+5. Prefer `tests/TestMocks.js` and `tests/TestFixtures.js` over local one-off mocks.
+6. Keep production data out of tests.
 
 ## Local Syntax Checks
 
@@ -77,7 +105,7 @@ these one-off functions to normal processing, setup, triggers, or menus.
 For a full repo syntax sweep in PowerShell:
 
 ```powershell
-Get-ChildItem -Filter *.js | ForEach-Object { node --check $_.FullName }
+Get-ChildItem -Recurse -Filter *.js | ForEach-Object { node --check $_.FullName }
 ```
 
 ## Whitespace Check
@@ -101,6 +129,20 @@ git -c safe.directory=C:/path/to/hx-part-picks diff --check
 - Local checks cannot exercise GmailApp, DriveApp, SpreadsheetApp, UrlFetchApp, LockService, PropertiesService, or Logger behavior.
 - `runLocalTests()` must run in the bound Apps Script project.
 - Production functions can touch Gmail, Sheets, Drive, and external services; do not run them without explicit approval.
+
+## Functions Not To Run Manually Without Approval
+
+Do not manually run these paths unless the operator explicitly approves the specific action:
+
+- `processPrinterEmails()`
+- production Gmail searches
+- PDF/Gemini/OCR extraction
+- Drive archive writes
+- `SummaryEmailService` send paths or checked production `Email` edits
+- one-off migrations/backfills
+- `setup()` unless the task is setup
+- `clasp push`
+- `git push`
 
 ## Test Helpers
 

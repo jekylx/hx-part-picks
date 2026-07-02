@@ -12,26 +12,38 @@ HX Part Picks is a single Apps Script project. Source is organized into service-
 
 ## Main Modules
 
-- `Code.js`: orchestration, locking, Gmail thread processing, batch/page dedupe, PDF split fallback, Gemini failure fallback.
+- `Code.js`: public entry points and thin orchestration only.
 - `Config.js`: central configuration, field definitions, summary columns, EOD report settings, Gemini settings, required script properties.
-- `GmailService.js`: printer Gmail query, PDF attachment filtering, label setup.
-- `PdfService.js`: external PDF splitter call and one-page PDF blob construction.
-- `GeminiService.js`: Gemini request/response handling.
-- `PromptService.js`: extraction prompt builder.
+- `services/EmailProcessorService.js`: production printer email processing, locking, thread isolation, PDF split fallback, Gemini failure fallback, raw row append, Drive archive, labels, and final Summary sync.
+- `services/ProcessingKeyService.js`: immutable batch/page processing key construction.
+- `services/GmailService.js`: printer Gmail query, PDF attachment filtering, label setup.
+- `services/PdfService.js`: external PDF splitter call and one-page PDF blob construction.
+- `services/GeminiService.js`: Gemini request/response handling.
+- `services/PromptService.js`: extraction prompt builder.
 - `SheetService.js`: raw sheet, log sheet, processed key sheet, configuration sheet setup, raw row append.
-- `SummaryService.js`: append-only summary creation by hidden `_Key`, summary formatting, SLA formulas, and `_Key`-based append placement.
+- `SummaryService.js`: facade for append-only summary orchestration and compatibility delegates.
+- `summary/SummarySchemaService.js`: Summary headers, schema migration, aliases, and column lookups.
+- `summary/SummaryDraftService.js`: raw-to-summary draft mapping and safe summary-value normalisation.
+- `summary/SummaryAppendWriterService.js`: single visible final Summary append, writable column groups, sparse notes/backgrounds, and `_Key`-based append placement.
+- `summary/SummaryFormatService.js`: summary formatting, owned validation placement, hidden operational columns, and conditional formatting.
+- `summary/SummarySlaService.js`: SLA formula generation.
+- `summary/SummaryEditRoutingService.js`: lightweight edit classification for Refresh and Email checkbox edits.
+- `summary/SummaryRefreshService.js`: queued Refresh worker, grouping, deadline handling, continuation trigger management, and per-row failure capture.
 - `SummaryEmailService.js`: sends reviewed summary row details and the original Drive PDF attachment when `Email` is checked; records durable email state in `_Summary Email Ledger` and blocks duplicate sends.
 - `DedupeService.js`: processed key lookup and writes.
 - `DriveService.js`: Drive folder creation and PDF archive naming.
-- `EodReportCsvService.js`: EOD report runtime cache, sheet-backed cache, Gmail search, CSV parsing, required header lookup.
+- `eod/EodReportCsvService.js`: EOD report runtime cache, sheet-backed cache, Gmail search, CSV parsing, required header lookup.
 - `EodReportCoordinator.js`: applies EOD services to new summary rows and writes validation.
 - `PalletAndProductByMemberEodReportService.js`: C/B/location/member/product enrichment.
 - `OutstandingOrdersEodReportService.js`: order/customer/carrier/state enrichment using Order+B matching.
-- `EodReportNormalisationService.js`: EOD comparison normalization and lookup key helpers.
-- `EodReportValidationService.js`: validation colour and note state.
-- `TestHarness.js`: Apps Script test functions.
-- `OneOffProductBackfill.js`: temporary migration helpers for historical product columns. Remove after the verified backfill.
-- `Utils.js`: MD5 and relaxed JSON parsing helpers.
+- `eod/EodReportNormalisationService.js`: EOD comparison normalization and lookup key helpers.
+- `eod/EodReportValidationService.js`: validation colour and note state.
+- `TestHarness.js`: compatibility anchor for the old monolithic harness filename.
+- `tests/TestRunner.js`: public Apps Script test runner functions and suite registry.
+- `tests/TestAssertions.js`, `tests/TestMocks.js`, `tests/TestFixtures.js`: shared test infrastructure.
+- `tests/<domain>/*.js`: focused test registries by behavior area.
+- `oneoff/OneOffProductBackfill.js`: temporary migration helpers for historical product columns. Remove after the verified backfill.
+- `services/Utils.js`: MD5 and relaxed JSON parsing helpers.
 
 ## Data Flow
 
@@ -48,9 +60,11 @@ Gmail Inbox printer thread
   -> Part Picks raw row
   -> _Processed Keys page key
   -> batch completion key
-  -> Part Pick Summary append-only row
-  -> EOD CSV report lookups
-  -> validation colours/notes
+  -> Summary draft built in memory
+  -> safe Summary normalisation
+  -> EOD CSV report lookups and validation in memory
+  -> final Part Pick Summary append-only row
+  -> validation colours/notes written with the append
   -> optional reviewed-row Email checkbox with archived PDF attachment
   -> processed Gmail label + archive
 ```
@@ -114,7 +128,7 @@ The batch key is written only when all pages are accounted for. Page keys allow 
 
 ## Summary Edit Actions
 
-The installable edit trigger still points to `handleSummaryRefreshEdit(e)`. That handler routes checked `Refresh` edits to one-row EOD refresh and checked or unchecked `Email` edits to `SummaryEmailService`. Setup migrates the old `Refresh EOD` and `Send Email` headers to the current shorter labels.
+The installable edit trigger still points to `handleSummaryRefreshEdit(e)`. That handler classifies the edit and returns quickly. Checked `Refresh` edits schedule `processPendingSummaryRefreshes()` and leave the checkbox checked as pending. The worker later scans checked rows, groups contiguous rows, applies EOD refreshes, clears successful checkboxes, records per-row failures, and schedules at most one continuation trigger when the deadline is near. Checked or unchecked `Email` edits route to `SummaryEmailService`. Setup migrates the old `Refresh EOD` and `Send Email` headers to the current shorter labels.
 
 `Email` only operates on the existing `Part Pick Summary` row. It reads the summary `PDF` Drive link, supports rich text links, `HYPERLINK` formulas, and raw Drive URLs, fetches the Drive PDF blob, and sends via `MailApp.sendEmail()` to `CONFIG.summaryEmail.recipient`.
 
