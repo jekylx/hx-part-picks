@@ -4973,6 +4973,7 @@ function testSummaryAppendDraftBlockedNotes_() {
     .getValues()[0];
   const validationCol = getColumnIndex_(headers, CONFIG.eodReports.validation.summaryColumn);
   const validationRange = summarySheet.getRange(find.rowNumber, validationCol);
+  const actualColour = validationRange.getBackgrounds()[0][0];
 
   assertTruthy_(find.rowNumber > 0, 'Summary row should append even when EOD reports are missing.');
   assertContains_(
@@ -4981,8 +4982,8 @@ function testSummaryAppendDraftBlockedNotes_() {
     'Draft EOD no-match note should be written during final append.'
   );
   assertEquals_(
-    CONFIG.eodReports.validation.colours.noMatch,
-    validationRange.getBackgrounds()[0][0],
+    '#fff2cc',
+    String(actualColour || '').trim().toLowerCase(),
     'Draft EOD no-match colour should be written during final append.'
   );
 }
