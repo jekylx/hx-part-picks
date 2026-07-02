@@ -10,6 +10,10 @@ const EodReportCoordinator = {
     }
   },
 
+  applyToSummaryRowsOrThrow(sheet, startRow, rowCount) {
+    this.applyToSummaryRows_(sheet, startRow, rowCount);
+  },
+
   refreshSummaryRow(sheet, rowNumber) {
     this.validateRefreshTarget_(sheet, rowNumber);
 
